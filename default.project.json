@@ -1,0 +1,17 @@
+{
+  "name": "LuauGBA",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/Shared" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "GBAClient": { "$path": "src/Client" }
+      }
+    },
+    "ServerScriptService": {
+      "GBAServer": { "$path": "src/Server" }
+    }
+  }
+}
