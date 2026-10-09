@@ -282,7 +282,9 @@ end
 
 --- Read a register; R15 reads as PC + pipeline offset.
 function CPU:reg(i: number): number
-	if i == 16 then
+	-- Register numbers are 0-based; R15 is the program counter and reads as
+	-- address+8 (ARM) or address+4 (THUMB).
+	if i == 15 then
 		if self.thumb then return self.regs[16] + 2 end
 		return self.regs[16] + 4
 	end
@@ -291,7 +293,7 @@ end
 
 --- Write a register. Writing R15 is a branch.
 function CPU:setReg(i: number, value: number)
-	if i == 16 then
+	if i == 15 then
 		self:branch(value)
 	else
 		self.regs[i + 1] = value % 0x100000000
@@ -371,9 +373,9 @@ function CPU:executeARM(op: number): number
 	if op1 == 0 and nib == 9 and kind == 0 then
 		local mtype = (op // 0x200000) % 8
 		if mtype == 0 or mtype == 1 then
-			local rd = (op // 16) % 16
-			local rn = (op // 12) % 16
-			local rs = (op // 8) % 16
+			local rd = (op // 0x10000) % 16
+			local rn = (op // 0x1000) % 16
+			local rs = (op // 0x100) % 16
 			local rm = op % 16
 			local result = (self:reg(rm) * self:reg(rs)) % 0x100000000
 			if mtype == 1 then result = (result + self:reg(rn)) % 0x100000000 end
@@ -382,9 +384,9 @@ function CPU:executeARM(op: number): number
 			return 3
 		elseif mtype >= 2 and mtype <= 5 then
 			local rm = op % 16
-			local rs = (op // 8) % 16
-			local rdHi = (op // 16) % 16
-			local rdLo = (op // 12) % 16
+			local rs = (op // 0x100) % 16
+			local rdHi = (op // 0x10000) % 16
+			local rdLo = (op // 0x1000) % 16
 			local a, b = self:reg(rm), self:reg(rs)
 			local signed = mtype >= 4
 			local prod
@@ -413,8 +415,8 @@ function CPU:executeARM(op: number): number
 	-- Swap: bits 27-24 = 0001, bits 7-4 = 1001
 	if op1 == 0 and nib == 9 and kind == 1 then
 		local rm = op % 16
-		local rd = (op // 12) % 16
-		local rn = (op // 16) % 16
+		local rd = (op // 0x1000) % 16
+		local rn = (op // 0x10000) % 16
 		local byte = bit32.band(op, 0x400000) ~= 0
 		local addr = self:reg(rn)
 		local value = byte and self:readByte(addr) or self:readWord(addr)
@@ -425,13 +427,13 @@ function CPU:executeARM(op: number): number
 	end
 
 	-- Halfword / signed byte / signed halfword: bits 27-24 = 0000, bits 7-4 = 1SH1
-	if op1 == 0 and kind == 0 and (nib == 0xB or nib == 0xD or nib == 0xF) then
-		local rd = (op // 12) % 16
-		local rn = (op // 16) % 16
+	if op1 == 0 and (nib == 0xB or nib == 0xD or nib == 0xF) then
+		local rd = (op // 0x1000) % 16
+		local rn = (op // 0x10000) % 16
 		local immediate = bit32.band(op, 0x400000) ~= 0
 		local offset
 		if immediate then
-			offset = bit32.bor(bit32.band(op, 0xF), bit32.band(op // 4, 0xF0))
+			offset = bit32.bor(bit32.band(op, 0xF), bit32.band(op // 16, 0xF0))
 		else
 			offset = self:reg(op % 16)
 		end
@@ -536,7 +538,7 @@ function CPU:executeARM2(op: number, op1: number): number
 	local kind = (op // 0x1000000) % 16
 
 	-- PSR transfers: MRS / MSR (bits 27-24 = 0001, bits 7-4 = 0000)
-	if op1 == 0 and kind == 1 and ((op // 16) % 16) ~= 9 then
+	if op1 == 0 and kind == 1 and nib == 0 then
 		local useSPSR = bit32.band(op, 0x400000) ~= 0
 		local rd = (op // 0x1000) % 16
 		local subOp = (op // 0x100000) % 4

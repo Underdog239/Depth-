@@ -173,8 +173,8 @@ do
 	rom[1] = 0xFE; rom[2] = 0xFF; rom[3] = 0xFF; rom[4] = 0xEA
 	-- title 'TESTGAME'
 	local title = "TESTGAME"
-	for i = 1, #title do rom[0x00 + i] = string.byte(title, i) end
-	rom[0x0C + 1] = string.byte("A"); rom[0x0C + 2] = string.byte("X"); rom[0x0C + 3] = string.byte("V"); rom[0x0C + 4] = string.byte("J")
+	for i = 1, #title do rom[0xA0 + i] = string.byte(title, i) end
+	rom[0xAC + 1] = string.byte("A"); rom[0xAC + 2] = string.byte("X"); rom[0xAC + 3] = string.byte("V"); rom[0xAC + 4] = string.byte("J")
 	rom[0xBE + 1] = 0 -- 32 KiB size index
 	local cart = Cartridge.new(rom)
 	check("title parsed", cart.info.title == "TESTGAME", cart.info.title)
@@ -196,6 +196,36 @@ do
 	check("frame counter advanced", gba.frames == 1, gba.frames)
 	check("ppu produced a frame", gba.ppu.frame >= 1, gba.ppu.frame)
 	check("pc still inside ROM", gba.cpu.regs[16] == 0x08000000, string.format("0x%08X", gba.cpu.regs[16]))
+end
+
+-- End-to-end: homebrew ROM that paints the screen (no copyrighted content)
+section("End-to-end (homebrew mode-3 fill)")
+do
+	local rom = table.create(0x8000, 0)
+	local function w32(off, value)
+		rom[off + 1] = value % 256
+		rom[off + 2] = (value // 0x100) % 256
+		rom[off + 3] = (value // 0x10000) % 256
+		rom[off + 4] = (value // 0x1000000) % 256
+	end
+	w32(0x00, 0xEA00002E) -- B 0xC0 (entry point branches past the header)
+	local code = { 0xE59F0020, 0xE59F1020, 0xE5801000, 0xE59F201C, 0xE59F301C, 0xE59F401C, 0xE1E230B2, 0xE2544001, 0x1AFFFFFC, 0xEAFFFFFE }
+	for i, word in code do w32(0xC0 + (i - 1) * 4, word) end
+	local color15 = 3 + 25 * 0x20 + 11 * 0x400 -- rgb(30,200,90) quantised to 15-bit
+	local pool = { 0x04000000, 0x00000403, 0x06000000, color15, 240 * 160 }
+	for i, word in pool do w32(0xC0 + #code * 4 + (i - 1) * 4, word) end
+	local title = "LUAUGBATEST"
+	for i = 1, #title do rom[0xA0 + i] = string.byte(title, i) end
+	rom[0xB2 + 1] = 0x96
+
+	local gba = GBA.new({ rom = rom })
+	check("homebrew title parsed", gba.cart.info.title == "LUAUGBATEST", gba.cart.info.title)
+	for _ = 1, 3 do gba:runFrame() end
+	local fb = gba:framebuffer()
+	local o = (80 * 240 + 100) * 4
+	check("homebrew screen filled", fb[o + 1] == 24 and fb[o + 2] == 205 and fb[o + 3] == 90,
+		string.format("%d,%d,%d", fb[o + 1], fb[o + 2], fb[o + 3]))
+	check("cpu parked in the idle loop", gba.cpu.regs[16] == 0x080000E4, string.format("0x%08X", gba.cpu.regs[16]))
 end
 
 print(string.format("\n%d checks, %d failures", total, failures))

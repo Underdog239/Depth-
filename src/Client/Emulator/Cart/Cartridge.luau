@@ -59,7 +59,7 @@ function Cartridge.parseHeader(rom: { number }): any
 		return (Util.bytesToString(bytes)):gsub("[%z\s]+$", "")
 	end
 
-	local fixed = rom[0xB3] or 0 -- 0x96 expected at 0xB2 in fixed-value region
+	local fixed = rom[0xB2 + 1] or 0 -- 0x96 expected at 0xB2 in fixed-value region
 	local entry = Util.readLE(rom, 1, 4)
 	local checksum = 0
 	for i = 0xA0, 0xBC do
@@ -70,9 +70,9 @@ function Cartridge.parseHeader(rom: { number }): any
 	local romSize = 0x8000 * (2 ^ sizeIndex)
 
 	return {
-		title = str(0, 12),
-		gameCode = str(0xC, 4),
-		makerCode = str(0x10, 2),
+		title = str(0xA0, 12),
+		gameCode = str(0xAC, 4),
+		makerCode = str(0xB0, 2),
 		version = rom[0xBC + 1] or 0,
 		entryPoint = entry,
 		headerChecksum = hdrChecksum,
@@ -80,7 +80,7 @@ function Cartridge.parseHeader(rom: { number }): any
 		firmwareFlag = fixed,
 		romSizeBytes = romSize,
 		sizeIndex = sizeIndex,
-		saveType = detectSaveType(str(0xC, 4), SAVE_SRAM),
+		saveType = detectSaveType(str(0xAC, 4), SAVE_SRAM),
 	}
 end
 

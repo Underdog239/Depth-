@@ -49,6 +49,17 @@ Regions.SRAM_BASE = 0x0E000000
 Regions.SRAM_SIZE = 0x10000
 Regions.SRAM_MASK = Regions.SRAM_SIZE - 1
 
+--- VRAM is 96 KiB (0x18000), which is *not* a power of two, so it cannot be
+-- masked with size-1. The 32 KiB at 0x06018000-0x0601FFFF mirror the first
+-- 32 KiB of VRAM; everything else addresses VRAM directly.
+function Regions.vramOffset(addr: number): number
+	local off = bit32.band(addr, 0x1FFFF)
+	if off >= Regions.VRAM_SIZE then
+		off -= 0x8000
+	end
+	return off
+end
+
 --- Return the memory region index for an address (fast top-byte branch).
 function Regions.regionOf(addr: number): number
 	local top = addr // 0x1000000

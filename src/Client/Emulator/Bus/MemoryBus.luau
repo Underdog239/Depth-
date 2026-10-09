@@ -66,7 +66,7 @@ function MemoryBus:read8(addr: number): number
 	elseif top == 0x05 then
 		return self.pal[bit32.band(addr, Regions.PAL_MASK) + 1] or 0
 	elseif top == 0x06 then
-		return self.vram[bit32.band(addr, Regions.VRAM_MASK) + 1] or 0
+		return self.vram[Regions.vramOffset(addr) + 1] or 0
 	elseif top == 0x07 then
 		return self.oam[bit32.band(addr, Regions.OAM_MASK) + 1] or 0
 	elseif top <= 0x0D then
@@ -138,7 +138,7 @@ function MemoryBus:write16(addr: number, value: number)
 	if top == 0x04 then return self:writeIO16(bit32.band(addr, 0x3FE), value) end
 	if top == 0x06 then
 		-- VRAM: only aligned 16-bit writes land
-		local off = bit32.band(addr, Regions.VRAM_MASK)
+		local off = Regions.vramOffset(addr)
 		self.vram[off + 1] = bit32.band(value, 0xFF)
 		self.vram[off + 2] = bit32.band(value // 0x100, 0xFF)
 		return
