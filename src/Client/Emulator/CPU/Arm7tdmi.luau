@@ -286,7 +286,7 @@ function CPU:reg(i: number): number
 		if self.thumb then return self.regs[16] + 2 end
 		return self.regs[16] + 4
 	end
-	return self.regs[i]
+	return self.regs[i + 1]
 end
 
 --- Write a register. Writing R15 is a branch.
@@ -294,7 +294,7 @@ function CPU:setReg(i: number, value: number)
 	if i == 16 then
 		self:branch(value)
 	else
-		self.regs[i] = value % 0x100000000
+		self.regs[i + 1] = value % 0x100000000
 	end
 end
 
@@ -755,17 +755,17 @@ function CPU:executeTHUMB(op: number): number
 		local rs = (op // 8) % 8 + h2 * 8
 		local rd = op % 8 + h1 * 8
 		if opc == 3 then
-			self:branch(self:reg(rs + 1), true)
+			self:branch(self:reg(rs), true)
 			return 3
 		end
-		local a = self:reg(rd + 1)
-		local b = self:reg(rs + 1)
+		local a = self:reg(rd)
+		local b = self:reg(rs)
 		if opc == 0 then
-			self:setReg(rd + 1, addWithCarry(self, a, b, 0))
+			self:setReg(rd, addWithCarry(self, a, b, 0))
 		elseif opc == 1 then
 			subWithCarry(self, a, b, 1)
 		elseif opc == 2 then
-			self:setReg(rd + 1, b)
+			self:setReg(rd, b)
 		end
 		return 1
 	end
@@ -991,7 +991,5 @@ function CPU:step(): number
 		return self:executeARM(op)
 	end
 end
-
-return CPU
 
 return CPU

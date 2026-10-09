@@ -86,7 +86,7 @@ end
 --- Stable dedup symbol: category + normalized message + source.
 function Classifier.symbolFor(category: Category, message: string, source: string): string
 	-- strip numbers/addresses so "read8(0x1FF)" and "read8(0x200)" dedup.
-	local norm = message:gsub("%d+", "N"):gsub("[%x]+%.luau", "FILE")
+	local norm = message:gsub("0x%x+", "N"):gsub("%d+", "N"):gsub("[%w_]+%.luau", "FILE")
 	return `{category}|{source}|{norm}`
 end
 

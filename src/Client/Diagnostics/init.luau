@@ -39,7 +39,7 @@ Diag.VERSION = Config.VERSION
 
 Diag.onFinding = Signal.new()
 Diag._store = Store.new(Config.DIAG.maxEvents)
-Diag._invariants: { Invariant } = {}
+Diag._invariants = {} :: { Invariant }
 Diag._installed = false
 Diag._lastScan = 0
 Diag._scanRuns = 0

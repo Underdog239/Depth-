@@ -12,7 +12,7 @@ local ORDER = { "trace", "debug", "info", "warn", "error", "fatal" }
 
 Logger.level = LEVELS.info
 Logger._sink = nil :: ((level: string, msg: string, meta: any?) -> ())?
-Logger._history: { { level: string, msg: string, ts: number } } = {}
+Logger._history = {} :: { { level: string, msg: string, ts: number } }
 local MAX_HISTORY = 200
 
 function Logger.setLevel(name: string)
