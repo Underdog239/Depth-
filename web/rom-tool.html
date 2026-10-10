@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LuauGBA - ROM embedding tool</title>
+<style>
+  :root { --bg:#12141a; --panel:#1b1e27; --line:#2c313d; --fg:#e6e9f0; --dim:#98a0b3; --accent:#5cc8a1; --warn:#e0a33c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .wrap { max-width:820px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--dim); margin-bottom:24px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 12px; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:36px; text-align:center; color:var(--dim); cursor:pointer; transition:.15s; }
+  #drop.over { border-color:var(--accent); color:var(--accent); }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:4px 0; border-bottom:1px solid var(--line); }
+  td:first-child { color:var(--dim); width:170px; }
+  button { background:var(--accent); color:#08110d; border:0; border-radius:6px; padding:9px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); font-weight:400; }
+  textarea { width:100%; height:150px; background:#0d0f14; color:var(--dim); border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; resize:vertical; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .warn { color:var(--warn); }
+  .ok { color:var(--accent); }
+  code { background:#0d0f14; padding:2px 6px; border-radius:4px; }
+  ol { padding-left:20px; color:var(--dim); }
+  ol li { margin-bottom:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LuauGBA - ROM embedding tool</h1>
+  <div class="sub">Runs entirely in your browser. The ROM is never uploaded anywhere.</div>
+
+  <div class="panel">
+    <h2>1. Choose a ROM</h2>
+    <div id="drop">drop a .gba file here, or click to choose</div>
+    <input id="file" type="file" accept=".gba,.agb,.bin" hidden>
+    <div id="info" style="margin-top:14px"></div>
+  </div>
+
+  <div class="panel">
+    <h2>2. Generate the module</h2>
+    <div class="row">
+      <label>chunk size <input id="chunk" type="number" value="50000" min="1000" max="200000" style="width:110px;background:#0d0f14;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px"></label>
+      <button id="gen" disabled>Generate ROM.luau</button>
+      <button id="dl" class="ghost" disabled>Download</button>
+      <button id="copy" class="ghost" disabled>Copy base64</button>
+    </div>
+    <div id="status" style="margin-top:12px;color:var(--dim)"></div>
+  </div>
+
+  <div class="panel">
+    <h2>3. Install it</h2>
+    <ol>
+      <li>Save the download as <code>src/Assets/ROM.luau</code> in the LuauGBA repo.</li>
+      <li>Make sure <code>default.project.json</code> maps <code>src/Assets</code> to <code>ReplicatedStorage.Assets</code>.</li>
+      <li>Run <code>rojo serve</code>, connect in Studio, press Play. The client auto-loads it.</li>
+    </ol>
+    <div class="sub" style="margin:0">Do not commit ROM.luau to git - it is already in .gitignore.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Preview</h2>
+    <textarea id="preview" readonly placeholder="generated module appears here"></textarea>
+  </div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const infoEl = document.getElementById('info');
+const statusEl = document.getElementById('status');
+const preview = document.getElementById('preview');
+let bytes = null, name = '';
+
+function parseHeader(u8) {
+  const ascii = (o, n) => Array.from(u8.slice(o, o + n)).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '').join('').trim();
+  let checksum = 0;
+  for (let i = 0xA0; i <= 0xBC; i++) checksum = (checksum - u8[i]) & 0xFF;
+  const sizeIndex = u8[0xBE];
+  return {
+    title: ascii(0xA0, 12) || '(none)',
+    code: ascii(0xAC, 4) || '(none)',
+    maker: ascii(0xB0, 2) || '(none)',
+    version: u8[0xBC],
+    headerChecksumOk: checksum === u8[0xBD],
+    declaredSize: 0x8000 * Math.pow(2, sizeIndex)
+  };
+}
+
+function load(u8, fileName) {
+  bytes = u8; name = fileName;
+  const h = parseHeader(u8);
+  infoEl.innerHTML = `<table>
+    <tr><td>file</td><td>${fileName}</td></tr>
+    <tr><td>size</td><td>${u8.length.toLocaleString()} bytes (${(u8.length/1024/1024).toFixed(2)} MiB)</td></tr>
+    <tr><td>title</td><td>${h.title}</td></tr>
+    <tr><td>game code</td><td>${h.code} / ${h.maker}</td></tr>
+    <tr><td>version</td><td>${h.version}</td></tr>
+    <tr><td>header checksum</td><td class="${h.headerChecksumOk ? 'ok' : 'warn'}">${h.headerChecksumOk ? 'valid' : 'MISMATCH'}</td></tr>
+    <tr><td>declared ROM size</td><td>${(h.declaredSize/1024).toFixed(0)} KiB</td></tr>
+  </table>`;
+  document.getElementById('gen').disabled = false;
+  statusEl.textContent = 'ready';
+}
+
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) readFile(e.target.files[0]); });
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+
+function readFile(f) {
+  const r = new FileReader();
+  r.onload = () => load(new Uint8Array(r.result), f.name);
+  r.readAsArrayBuffer(f);
+}
+
+function toBase64(u8) {
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  return btoa(s);
+}
+
+let b64 = null;
+
+document.getElementById('gen').addEventListener('click', () => {
+  const chunkSize = Math.max(1000, parseInt(document.getElementById('chunk').value, 10) || 50000);
+  b64 = toBase64(bytes);
+  const chunks = [];
+  for (let i = 0; i < b64.length; i += chunkSize) chunks.push(b64.slice(i, i + chunkSize));
+  const out = '--!nocheck\n-- LuauGBA embedded ROM: ' + name + '\n'
+    + '-- Generated by web/rom-tool.html. Do not commit this file.\n'
+    + '-- ' + bytes.length + ' bytes, ' + chunks.length + ' base64 chunks.\n\n'
+    + 'return {\n' + chunks.map(c => '\t"' + c + '",').join('\n') + '\n}\n';
+  window.__romluau = out;
+  preview.value = out.slice(0, 4000) + (out.length > 4000 ? '\n... (' + (out.length - 4000).toLocaleString() + ' more characters)' : '');
+  statusEl.innerHTML = `generated <b>${out.length.toLocaleString()}</b> characters in ${chunks.length} chunks <span class="ok">(ok)</span>`;
+  document.getElementById('dl').disabled = false;
+  document.getElementById('copy').disabled = false;
+});
+
+document.getElementById('dl').addEventListener('click', () => {
+  const blob = new Blob([window.__romluau], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ROM.luau';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  if (!b64) return;
+  if (b64.length > 200000) {
+    statusEl.innerHTML = `<span class="warn">base64 is ${b64.length.toLocaleString()} chars - too large for the in-game paste box. Use the module instead.</span>`;
+  }
+  try { await navigator.clipboard.writeText(b64); statusEl.innerHTML += ' <span class="ok">copied</span>'; }
+  catch { statusEl.innerHTML += ' <span class="warn">clipboard blocked</span>'; }
+});
+</script>
+</body>
+</html>

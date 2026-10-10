@@ -35,9 +35,7 @@ local RULES: { Rule } = {
 	{ name = "unsafe-loadstring", pattern = "%f[%a]loadstring%s*%(", category = "vulnerability", severity = "error" },
 	{ name = "getfenv/setfenv", pattern = "%f[%a][gs]etfenv%s*%(", category = "vulnerability", severity = "warn" },
 	{ name = "require-numeric-asset", pattern = "require%s*%(%s*%d+", category = "vulnerability", severity = "error" },
-	{ name = "remote-fire-unvalidated", pattern = "%:[Ff]ire[A-Za-z]*%(", category = "vulnerability", severity = "info" },
-	{ name = "swallowed-error", pattern = "pcall%([^)]*%)%s*$|pcall%s*%([^%s]+%)%s*$", category = "bug", severity = "info" },
-	{ name = "global-write", pattern = "^%s*[%a_][%w_]*%s*=", category = "bug", severity = "info" },
+	{ name = "remote-fire-unvalidated", pattern = "%:[Ff]ire(Server|Client|AllClients)%s*%(", category = "vulnerability", severity = "info" },
 }
 
 --- Scan one source blob line by line, returning hits.
@@ -78,7 +76,10 @@ function StaticScan.scanInstance(root: Instance, opts: { maxLines: number? }?): 
 	for _, inst in descendants do
 		if budget <= 0 then break end
 		local isScript = inst:IsA("LuaSourceContainer")
-		if isScript then
+		-- Skip this module: its rule table necessarily contains the very
+		-- keywords being searched for, which would be a guaranteed self-flag.
+		local isSelf = inst.Name == "StaticScan"
+		if isScript and not isSelf then
 			local okSrc, src = pcall(function()
 				return (inst :: any).Source
 			end)

@@ -105,6 +105,35 @@ function Diag.findings(filter: { category: string?, minSeverity: string? }?)
 	return out
 end
 
+--- Merge findings that were persisted by the server in an earlier session.
+-- Counts are reconciled by taking the higher value so a rejoin does not inflate
+-- occurrence totals.
+function Diag.mergeFindings(list: { any })
+	if type(list) ~= "table" then return end
+	for _, raw in list do
+		if type(raw) == "table" and type(raw.message) == "string" and type(raw.symbol) == "string" then
+			local existing = Diag._store:get(raw.symbol)
+			if existing then
+				existing.count = math.max(existing.count, raw.count or 1)
+				existing.lastSeen = math.max(existing.lastSeen, raw.lastSeen or 0)
+			else
+				Diag._store:add({
+					id = raw.symbol,
+					category = raw.category or "bug",
+					severity = raw.severity or "info",
+					message = raw.message,
+					source = raw.source or "server",
+					symbol = raw.symbol,
+					stack = raw.stack,
+					count = raw.count or 1,
+					firstSeen = raw.firstSeen or 0,
+					lastSeen = raw.lastSeen or 0,
+				})
+			end
+		end
+	end
+end
+
 function Diag.summary()
 	return {
 		counts = Diag._store:countByCategory(),

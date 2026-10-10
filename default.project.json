@@ -3,15 +3,24 @@
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
-      "Shared": { "$path": "src/Shared" }
+      "Shared": {
+        "$path": "src/Shared"
+      },
+      "Assets": {
+        "$path": "src/Assets"
+      }
     },
     "StarterPlayer": {
       "StarterPlayerScripts": {
-        "GBAClient": { "$path": "src/Client" }
+        "GBAClient": {
+          "$path": "src/Client"
+        }
       }
     },
     "ServerScriptService": {
-      "GBAServer": { "$path": "src/Server" }
+      "GBAServer": {
+        "$path": "src/Server"
+      }
     }
   }
 }

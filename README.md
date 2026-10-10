@@ -26,6 +26,22 @@ roblox/                      rojo project (default.project.json)
   tools/                     test harness + homebrew ROM generator
 ```
 
+## Getting a ROM in (the one real constraint)
+
+A Roblox client cannot read local files, so ROM bytes have to be baked into the
+place. The supported path is a **browser-side tool** that never uploads
+anything:
+
+1. Open `web/rom-tool.html` in any browser (no server, no signup, no hosting).
+2. Drop your legally-owned ROM on it. It parses the header and shows title, game
+   code and checksum status.
+3. Download `ROM.luau` into `src/Assets/`.
+4. `rojo serve`, press Play - the client auto-loads it on join.
+
+`src/Assets/ROM.luau` is git-ignored on purpose. There is also an in-game base64
+box for small homebrew ROMs; a multi-megabyte commercial ROM will not fit in a
+TextBox.
+
 ## Quick start
 
 1. Install [Rojo](https://rojo.space/) and sync this repo into a place:
@@ -94,6 +110,19 @@ DataStore) so they survive a rejoin. Open the dashboard to read them - you never
 have to run a script to see results.
 
 See `docs/DIAGNOSTICS.md` for the full model.
+
+## What v1.0 includes
+
+* **Core**: ARM7TDMI (ARM + THUMB), memory bus, PPU modes 0-5 with sprites,
+  windows and blending, DMA, timers, interrupts, keypad, HLE BIOS.
+* **Saves**: SRAM, Flash (command state machine) and EEPROM (serial over DMA3),
+  with save-state snapshot/restore.
+* **Audio**: full APU register model, mixer and sample pipeline (see
+  `docs/AUDIO.md` for the Roblox playback wall).
+* **Diagnostics**: background catcher, static scanner, invariants, watchdog,
+  live dashboard, cross-session persistence.
+* **Tooling**: headless test harness (54 checks), homebrew ROM generator,
+  browser ROM embedding tool.
 
 ## Honest performance notes
 

@@ -125,6 +125,20 @@ function GBA:runFrame(): number
 	self.ppu.frameComplete = false
 	local guard = 0
 	local maxIterations = Config.CORE.maxCyclesPerFrame
+
+	-- Optional fixed-budget mode: ignore VBlank pacing and run a set number of
+	-- cycles. Used for benchmarking and for titles that need a speed nudge.
+	if Config.CORE.skipFrameCap then
+		local target = Config.CORE.fixedCyclesPerFrame
+		local start = self.bus.cycles
+		while self.bus.cycles - start < target and guard < maxIterations do
+			self:stepInstruction()
+			guard += 1
+		end
+		self.frames += 1
+		return self.ppu.frame
+	end
+
 	while not self.ppu.frameComplete do
 		self:stepInstruction()
 		guard += 1
