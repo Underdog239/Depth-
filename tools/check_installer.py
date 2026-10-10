@@ -79,7 +79,7 @@ local function reset()
     scripts.Name = 'StarterPlayerScripts'
     scripts.Parent = services.StarterPlayer
 end
-local function install()
+local function install(...)
 '''
 checks=r'''
 end

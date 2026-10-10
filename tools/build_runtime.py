@@ -89,6 +89,22 @@ if __gui:FindFirstChild("LuauGBA") then
     return
 end
 ''')
+        output.append('''-- The browser helper can pass a private ROM as the chunk's first argument.
+local __romText = ...
+if __romText ~= nil then
+    assert(type(__romText) == "string" and #__romText <= 44739244,
+        "Depth launcher ROM must be base64 text for a ROM up to 32 MiB.")
+    local __bytes = __load("ReplicatedStorage/Shared/Base64").decodeToBuffer(__romText)
+    __romText = nil
+    assert(buffer.len(__bytes) >= 192 and buffer.len(__bytes) <= 33554432,
+        "Depth launcher ROM must be between 192 bytes and 32 MiB.")
+    __load("StarterPlayer/StarterPlayerScripts/GBAClient/Emulator/ROMLoader").find = function()
+        local bytes = __bytes
+        __bytes = nil
+        return bytes, "client launcher"
+    end
+end
+''')
         # Bootstrap returns no value, unlike the cached modules.
         output.append('__factories[' + json.dumps(entry) + ']()\n')
     else:

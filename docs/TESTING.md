@@ -118,3 +118,18 @@ Include the game title/code, build version, whether the demo works, renderer
 backend, reproduction steps, the status/Output error and relevant Diagnostics
 entries. Include emulated PC or SWI number when shown. Avoid uploading private
 ROM data in a bug report.
+
+## Gold interface and client launcher acceptance
+
+- Check Library, Controls, Settings and Saves with keyboard, controller and touch.
+  Only the selected page's content should appear; scrolling resets on page change.
+  Opening Library pauses game input; closing it restores gameplay.
+- Verify gold text/button contrast, wrapping, scrolling and touch targets at
+  phone portrait/landscape, tablet and desktop sizes. Roblox rendering remains
+  a manual check; service mocks cannot establish visual fidelity.
+- In the browser helper, choose a permitted .gba, Generate and Download client
+  launcher. In a fresh client with HTTP/loadstring support, run it before Depth.
+  Confirm the game auto-loads, then check save export/import. An existing Depth
+  session should produce a fresh-session instruction instead of replacing it.
+- Automated coverage checks generated ROM bytes, launcher handoff, auto-load,
+  rejected malformed payloads, tab navigation and normal runtime startup.

@@ -1,25 +1,53 @@
-# Easy ROM loading
+# Add a game to Depth
 
-Download `web/rom-tool.html` from the repository and open it in a browser.
-Select a `.gba` ROM, then Generate. The file never leaves your browser.
+Depth uses **Game Boy Advance ROMs** (`.gba`), not Game Boy/DS/Switch files.
+Start with **Run demo** to check your setup without finding a ROM. For your own
+game, use a homebrew ROM or a backup you have permission to use. Extract ZIP
+archives before choosing a file.
 
-- **Small ROM:** Copy base64 → Depth Menu → Add a game → Load pasted ROM.
-- **Larger ROM in Studio:** Download Studio ROM installer. Stop Play, open the
-  downloaded script, paste it into Studio's Command Bar, then Play. No Rojo
-  setup is needed. The installer refuses to overwrite an existing Assets.ROM.
-- **Rojo:** Download ROM module as `src/Assets/ROM.luau`; rebuild/sync.
+## Client launcher — no Studio installation
 
-Use ROMs you can legally use. Nothing is uploaded by the helper. A normal
-Roblox client cannot open device files or fetch arbitrary HTTP ROM URLs.
-Mobile players receive ROM assets already embedded in the place or can paste
-small base64 ROMs; installing larger ROMs requires desktop Roblox Studio.
+1. Download `web/rom-tool.html` from GitHub (Download raw file), then open the
+   downloaded HTML file in your browser. The same helper is supplied in Outputs.
+2. Choose your `.gba` file and press **Generate**.
+3. Press **Download client launcher**. Open `Depth-game.luau` as text.
+4. Join a fresh Roblox session and run the **entire downloaded script** in your
+   client loader. Run this first, before opening Depth separately. The game loads
+   automatically; opening Library pauses gameplay while you browse.
 
-The maximum embedded ROM is 32 MiB; the paste box accepts 200,000 characters.
-Large scripts may exceed practical Studio Command Bar limits; use the Rojo
-module workflow when that happens. Header checksum warnings are reported but
-are not a guarantee of compatibility. BIOS support is partial.
+The loader must support `game:HttpGet` and `loadstring`. The launcher downloads
+Depth's current runtime from its published task branch on GitHub and passes the
+ROM directly to it. No Studio flags, ModuleScript creation or `.Source` writes
+are used on this path. Ordinary Roblox LocalScripts cannot use this HTTP loader;
+use the Studio/Rojo method in your own experience instead.
 
-Before replacing a game, export its battery save through the Menu and keep the
-text in a file. Stop Play and back up/remove the old Assets.ROM before installing
-a new one. Import save text only after loading the same game; matching byte
-length alone does not identify the game. State snapshots stay within a session.
+Your ROM stays on your device. **Keep the generated launcher private**: it contains
+the game data. The helper accepts up to 32 MiB, but large generated scripts may
+exceed a loader's size/memory limits. Downloading/importing a game does not imply
+that the emulator supports it. BIOS support is partial; game speed and audio have
+known limits. If a game freezes, check Saves → Health report and try the demo.
+
+## Tiny ROMs — paste into the existing session
+
+Generate → **Copy base64** → Depth **Library** → paste into the ROM box →
+**Load pasted ROM**. This accepts at most 200,000 base64 characters (150,000 ROM
+bytes, about 146 KiB). Use the client launcher for larger files.
+
+## Studio / Rojo
+
+Expand **Studio / Rojo exports** in the helper:
+
+- **Download Studio ROM installer:** stop Play, paste the downloaded script into
+  Studio's Command Bar, then Play. It refuses to overwrite `Assets.ROM`.
+- **Download ROM module:** save as `src/Assets/ROM.luau`; rebuild/sync with Rojo.
+
+Large scripts may exceed Studio's Command Bar limits; use Rojo for those files.
+A normal Roblox client cannot browse local files; mobile players can paste tiny
+ROMs or play ROMs already included in their experience.
+
+## Keep your progress
+
+Before switching games, use **Saves → Export save** and copy the text to a file.
+Load the same game before importing it. State snapshots last only for the current
+session. For Studio installations, back up/remove the old `Assets.ROM` before
+installing a new game. Never commit ROMs or generated game launchers to GitHub.

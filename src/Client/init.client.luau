@@ -167,7 +167,7 @@ task.spawn(function()
 		Logger.info(`embedded ROM found via {source} ({buffer.len(bytes) // 1024} KiB)`)
 		if loadRomBytes(bytes) then ui:showMenu(false) end
 	else
-		ui:setStatus(`{Config.VERSION} ready - no embedded ROM ({source}). Paste base64 or add Assets.ROM`)
+		ui:setStatus("Ready when you are. Try Run demo, or open Library to add your game.")
 	end
 end)
 

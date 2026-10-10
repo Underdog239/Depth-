@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Boot both generated entry points against a non-Studio client with Source writes forbidden."""
 import argparse
+import base64
 from pathlib import Path
 import subprocess
 import tempfile
@@ -34,6 +35,7 @@ end})
 local Vector2={new=function(x,y) return {X=x,Y=y} end,zero={X=0,Y=0}}
 local UDim={new=function(scale,offset) return {Scale=scale,Offset=offset} end}
 local UDim2={new=function(...) return {...} end,fromOffset=function(...) return {...} end,fromScale=function(...) return {...} end}
+local ColorSequence={new=function(...) return {...} end}
 local Color3={new=function(...) return {...} end,fromRGB=function(...) return {...} end}
 local warn=function(message) table.insert(warnings,tostring(message)) end
 local task={}
@@ -95,12 +97,23 @@ local playerGui=Instance.new('PlayerGui');playerGui.Parent=player
 services.Players.LocalPlayer=player
 services.ReplicatedStorage=Instance.new('ReplicatedStorage')
 local game={GetService=function(_,name) return assert(services[name],'Unexpected service '..name) end}
-local function launch()
+local function launch(...)
 '''
 checks=r'''
 end
 launch()
 assert(playerGui:FindFirstChild('LuauGBA'),'Missing game UI')
+local tabs, fields = {}, {}
+for _,object in objects do
+ if object.Name:sub(1,3)=='Tab' then tabs[object.Name]=object end
+ if object.ClassName=='TextBox' then fields[object.PlaceholderText]=object end
+end
+local romBox=fields['Paste small ROM base64 here (up to 200,000 characters)']
+assert(romBox and romBox.Visible,'Library must expose ROM loading')
+assert(tabs.TabControls and tabs.TabSettings and tabs.TabSaves,'Missing navigation')
+tabs.TabControls.Activated:Fire();assert(not romBox.Visible,'Inactive page leaked controls')
+tabs.TabSaves.Activated:Fire();assert(fields['Battery save text'].Visible,'Save import must be reachable')
+tabs.TabLibrary.Activated:Fire();assert(romBox.Visible,'Returning to library must restore ROM import')
 local demo
 for _,object in objects do
  if object.ClassName=='TextButton' and object.Text and object.Text:find('Run demo',1,true) then demo=object end
@@ -135,6 +148,34 @@ with tempfile.TemporaryDirectory(prefix='depth-runtime-') as directory:
         script=Path(directory)/'boot.luau'
         script.write_text(mock+Path(name).read_text()+checks)
         subprocess.run([args.luau,str(script)],check=True)
+        rom_checks = checks.replace('launch()\n', 'launch("' + base64.b64encode(bytes(192)).decode() + '")\n', 1)
+        rom_checks = rom_checks.replace("local tabs, fields", "local loaded=false; for _,object in objects do if object.ClassName=='TextLabel' and object.Text and object.Text:find('ROM:',1,true) then loaded=true end end; assert(loaded,'Launcher ROM did not auto-load')\nlocal tabs, fields")
+        script.write_text(mock+Path(name).read_text()+rom_checks)
+        subprocess.run([args.luau,str(script)],check=True)
+        script.write_text(mock+Path(name).read_text()+"\nend\nlocal count=#objects; assert(not pcall(launch,'!!!')); assert(#objects==count, 'Invalid launcher ROM created UI')\n")
+        subprocess.run([args.luau,str(script)],check=True)
+    # Exercise the browser-generated launcher's handoff into the real runtime.
+    generated = Path(directory)/'rom.luau'
+    subprocess.run(['node',str(Path(__file__).with_name('check_rom_tool.cjs')),str(generated)],check=True)
+    script.write_text(mock+Path(args.runtime).read_text()+'''
+end
+local loadstring = function(source, name)
+ assert(source == "verified runtime" and name == "Depth-runtime")
+ return launch
+end
+game.HttpGet = function(_, url)
+ assert(url:find('/installer/Depth-runtime.luau',1,true))
+ return "verified runtime"
+end
+''' + Path(str(generated)+'.client.luau').read_text()+'''
+local loaded=false
+for _,object in objects do
+ if object.ClassName=='TextLabel' and object.Text and object.Text:find('ROM:',1,true) then loaded=true end
+end
+assert(loaded, 'Browser launcher did not hand ROM to runtime')
+print('PASS: browser-generated client launcher loads its ROM into actual bundled runtime with HTTP/compiler mocked')
+''')
+    subprocess.run([args.luau,str(script)],check=True)
     # Execute cached factories and actual emulator modules from the bundle.
     library=Path(directory)/'library.luau'
     library.write_text('local Enum = {KeyCode = setmetatable({}, {__index=function(_,key) return key end})}\n'

@@ -45,6 +45,18 @@ available. Otherwise it attempts to install the normal module hierarchy, which
 requires script `.Source` permissions (normally Studio's Edit-mode Command Bar).
 Use `Depth-runtime.luau` for direct client execution.
 
+## Gold interface and your own games
+
+The client has a charcoal/gold theme with **Library, Controls, Settings and Saves**
+tabs. Keyboard, touch and controller input still switch automatically. Styling
+uses native UI objects and static gradients; it adds no animation/render loop.
+
+For a ROM without Studio: download and open `web/rom-tool.html`, choose your `.gba`,
+click **Generate → Download client launcher**, then run the downloaded script in a
+fresh Roblox client session with HTTP/loadstring support. Your ROM is included
+locally and auto-loads. See [the ROM guide](docs/ROM_LOADING.md) for exact steps,
+small-ROM paste, Studio alternatives and save export.
+
 ## Install into an existing Studio place
 
 Stop Play and open Studio's **Command Bar** from the View tab. Enable
@@ -83,14 +95,15 @@ python3 tools/build_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau
 A Roblox client cannot open a local ROM file. Download `web/rom-tool.html`
 from GitHub and open the downloaded file in your browser. Files stay local.
 
-1. Choose a `.gba` file and press **Generate ROM.luau**.
-2. Small files: **Copy base64**, then **Menu → Add a game → Load pasted ROM**.
-3. Larger files: **Download Studio ROM installer**, stop Play and paste that
-   downloaded script into Studio's Command Bar. Press Play to auto-load it.
-4. Rojo users can instead save **Download ROM module** to `src/Assets/ROM.luau`
-   and rebuild/sync. The module path supports up to 32 MiB. The in-game paste
-   box is limited to 200,000 characters. Large ROM conversion/installation may
-   take time; use Rojo if Studio cannot accept a very large paste.
+1. Choose a `.gba` file and press **Generate**.
+2. **Download client launcher**, open it as text and run its full contents in a
+   fresh client session with HTTP/loadstring support. It auto-loads your ROM.
+3. Tiny files: **Copy base64**, then **Library → Load pasted ROM**.
+4. Studio/Rojo users can expand the helper's export options. See
+   [ROM loading](docs/ROM_LOADING.md) for installation and troubleshooting.
+
+The helper supports up to 32 MiB; your loader may impose a smaller limit. The
+in-game paste box is limited to 200,000 base64 characters.
 
 Generated ROMs are ignored by Git. No game ROMs or Nintendo BIOS are bundled.
 

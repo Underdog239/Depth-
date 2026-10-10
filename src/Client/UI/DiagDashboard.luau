@@ -11,6 +11,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage.Shared.Config)
+local Theme = require(script.Parent.Theme)
 
 local CATEGORY_COLORS = {
 	error = Color3.fromRGB(220, 60, 60),
@@ -43,7 +44,7 @@ end
 local function makeButton(text: string, parent: Instance, color: Color3?): TextButton
 	local b = Instance.new("TextButton")
 	b.Text = text
-	b.BackgroundColor3 = color or Color3.fromRGB(45, 48, 58)
+	b.BackgroundColor3 = color or Theme.raised
 	b.TextColor3 = Color3.new(1, 1, 1)
 	b.Font = Enum.Font.GothamMedium
 	b.TextSize = 13
@@ -68,16 +69,17 @@ function Dashboard:_build(parent: Instance?)
 	frame.Position = UDim2.fromScale(0.5,0.5)
 	local limit = Instance.new("UISizeConstraint")
 	limit.MaxSize = Vector2.new(700,650); limit.Parent = frame
-	frame.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
+	frame.BackgroundColor3 = Theme.panel
 	frame.BorderSizePixel = 0
 	frame.Parent = gui
 	self.frame = frame
+	Theme.outline(frame)
 
 	local title = Instance.new("TextLabel")
-	title.Text = "Health report"
+	title.Text = "DEPTH  /  Health report"
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 16
-	title.TextColor3 = Color3.new(1, 1, 1)
+	title.TextColor3 = Theme.gold
 	title.BackgroundTransparency = 1
 	title.Size = UDim2.new(1, -90, 0, 28)
 	title.Position = UDim2.fromOffset(10, 8)
@@ -93,7 +95,7 @@ function Dashboard:_build(parent: Instance?)
 	summary.Text = ""
 	summary.Font = Enum.Font.Code
 	summary.TextSize = 12
-	summary.TextColor3 = Color3.fromRGB(180, 190, 210)
+	summary.TextColor3 = Theme.muted
 	summary.BackgroundTransparency = 1
 	summary.Size = UDim2.new(1, -20, 0, 70)
 	summary.TextWrapped = true
@@ -124,7 +126,7 @@ function Dashboard:_build(parent: Instance?)
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Size = UDim2.new(1, -20, 1, -170)
 	scroll.Position = UDim2.fromOffset(10, 160)
-	scroll.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+	scroll.BackgroundColor3 = Theme.background
 	scroll.BorderSizePixel = 0
 	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -158,7 +160,7 @@ function Dashboard:refresh()
 	for i, f in list do
 		if i > 60 then break end
 		local row = Instance.new("Frame")
-		row.BackgroundColor3 = Color3.fromRGB(30, 33, 42)
+		row.BackgroundColor3 = Theme.raised
 		row.BorderSizePixel = 0
 		row.Size = UDim2.new(1, -8, 0, 118)
 		row.LayoutOrder = i
@@ -179,7 +181,7 @@ function Dashboard:refresh()
 		msg.Text = string.format("%s · [x%d] %s", f.source, f.count, f.message)
 		msg.Font = Enum.Font.Code
 		msg.TextSize = 12
-		msg.TextColor3 = Color3.fromRGB(220, 225, 235)
+		msg.TextColor3 = Theme.text
 		msg.BackgroundTransparency = 1
 		msg.Size = UDim2.new(1, -16, 0, 48)
 		msg.Position = UDim2.fromOffset(8, 20)
@@ -191,7 +193,7 @@ function Dashboard:refresh()
 		fix.Text = self.diag.advice(f)
 		fix.Font = Enum.Font.Code
 		fix.TextSize = 11
-		fix.TextColor3 = Color3.fromRGB(140, 200, 150)
+		fix.TextColor3 = Theme.gold
 		fix.BackgroundTransparency = 1
 		fix.Size = UDim2.new(1, -16, 0, 42)
 		fix.Position = UDim2.fromOffset(8, 70)

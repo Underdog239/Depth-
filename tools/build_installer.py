@@ -57,10 +57,10 @@ def bundle(place):
 -- Local player available: start the bundled runtime. Otherwise try source installation.
 -- Installs only into empty target paths; existing content is never overwritten.
 if game:GetService("Players").LocalPlayer then
-    local function startRuntime()
+    local function startRuntime(...)
 ''' + runtime + '''
     end
-    return startRuntime()
+    return startRuntime(...)
 end
 local starterScripts = game:GetService("StarterPlayer"):FindFirstChildOfClass("StarterPlayerScripts")
 assert(starterScripts, "Depth installer: StarterPlayerScripts is missing.")
