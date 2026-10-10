@@ -49,8 +49,27 @@ local SAVE_TABLE: { [string]: string } = {
 	["AXVJ"] = SAVE_EEPROM,
 }
 
-local function detectSaveType(gameCode: string, fallback: string): string
-	return SAVE_TABLE[gameCode] or fallback
+-- Save hardware is identified the way real emulators do it: by scanning the ROM
+-- for the marker string the linker leaves behind. Falls back to the game-code
+-- table, then to SRAM.
+local SAVE_MARKERS = {
+	{ "FLASH1M_V", SAVE_FLASH1024 },
+	{ "FLASH512_V", SAVE_FLASH512 },
+	{ "FLASH_V", SAVE_FLASH512 },
+	{ "SRAM_V", SAVE_SRAM },
+	{ "EEPROM_V", SAVE_EEPROM },
+}
+
+local function detectSaveType(rom: buffer, gameCode: string): string
+	local ok, text = pcall(buffer.tostring, rom)
+	if ok and type(text) == "string" then
+		for _, marker in SAVE_MARKERS do
+			if string.find(text, marker[1], 1, true) then
+				return marker[2]
+			end
+		end
+	end
+	return SAVE_TABLE[gameCode] or SAVE_SRAM
 end
 
 --- Parse the 0x00..0xBF header from a ROM buffer. Never raises.
@@ -88,7 +107,7 @@ function Cartridge.parseHeader(rom: buffer): any
 		firmwareFlag = u8(0xB2),
 		romSizeBytes = 0x8000 * (2 ^ sizeIndex),
 		sizeIndex = sizeIndex,
-		saveType = detectSaveType(gameCode, SAVE_SRAM),
+		saveType = detectSaveType(rom, gameCode),
 	}
 end
 

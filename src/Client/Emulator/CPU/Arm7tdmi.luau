@@ -195,64 +195,70 @@ end
 
 -- Barrel shifter ------------------------------------------------------------
 
-local function shiftOperand(cpu, value: number, type: number, amount: number, byRegister: boolean, regValue: number): number
+local function shiftOperand(cpu, value, type, amount, byRegister, regValue)
 	local carry = cpu.c
+	local result
 	if byRegister then
-		if band(regValue, 0xFF) == 0 then return value end
+		if band(regValue, 0xFF) == 0 then return value, carry end
 		amount = band(regValue, 0xFF)
 	end
+
 	if type == 0 then -- LSL
-		if amount == 0 then return value end
+		if amount == 0 then return value, carry end
 		if amount < 32 then
 			carry = band(rshift(value, 32 - amount), 1) ~= 0
-			return lshift(value, amount) % 0x100000000
+			result = lshift(value, amount) % 0x100000000
 		elseif amount == 32 then
 			carry = band(value, 1) ~= 0
-			return 0
+			result = 0
 		else
 			carry = false
-			return 0
+			result = 0
 		end
 	elseif type == 1 then -- LSR
 		if amount == 0 then
 			if not byRegister then
 				carry = band(value, 0x80000000) ~= 0
-				return 0
+				result = 0
+			else
+				return value, carry
 			end
-			return value
-		end
-		if amount < 32 then
+		elseif amount < 32 then
 			carry = band(rshift(value, amount - 1), 1) ~= 0
-			return rshift(value, amount)
+			result = rshift(value, amount)
 		elseif amount == 32 then
 			carry = band(value, 0x80000000) ~= 0
-			return 0
+			result = 0
 		else
 			carry = false
-			return 0
+			result = 0
 		end
 	elseif type == 2 then -- ASR
 		if amount == 0 or amount >= 32 then
 			local sign = band(value, 0x80000000) ~= 0
 			carry = sign
-			return sign and 0xFFFFFFFF or 0
+			result = sign and 0xFFFFFFFF or 0
+		else
+			carry = band(rshift(value, amount - 1), 1) ~= 0
+			result = arshift(value, amount) % 0x100000000
 		end
-		carry = band(rshift(value, amount - 1), 1) ~= 0
-		return arshift(value, amount) % 0x100000000
 	else -- ROR
-		if amount == 0 then return value end
-		amount %= 32
+		if amount == 0 then return value, carry end
+		amount = amount % 32
 		if amount == 0 then
 			carry = band(value, 0x80000000) ~= 0
-			return value
+			result = value
+		else
+			result = rrotate(value, amount)
+			carry = band(result, 0x80000000) ~= 0
 		end
-		local r = rrotate(value, amount)
-		carry = band(r, 0x80000000) ~= 0
-		return r
 	end
-end
-
-CPU._shiftOperand = shiftOperand
+	
+	-- The carry-out is part of the shifter contract. Callers that set flags need
+	-- it, and dropping it silently broke every shifted-flag test.
+	return result, carry
+	end
+	CPU._shiftOperand = shiftOperand
 CPU._addWithCarry = addWithCarry
 CPU._subWithCarry = subWithCarry
 CPU._setNZ = setNZ
@@ -260,19 +266,19 @@ CPU._setNZ = setNZ
 -- Memory access helpers -----------------------------------------------------
 
 function CPU:readWord(addr: number): number
-	return self.bus:read32(band(addr, 0xFFFFFFF))
+	return self.bus:read32(band(addr, 0xFFFFFFC))
 end
 
 function CPU:writeWord(addr: number, value: number)
-	self.bus:write32(band(addr, 0xFFFFFFF), value)
+	self.bus:write32(band(addr, 0xFFFFFFC), value)
 end
 
 function CPU:readHalf(addr: number): number
-	return self.bus:read16(band(addr, 0xFFFFFFF))
+	return self.bus:read16(band(addr, 0xFFFFFFE))
 end
 
 function CPU:writeHalf(addr: number, value: number)
-	self.bus:write16(band(addr, 0xFFFFFFF), value)
+	self.bus:write16(band(addr, 0xFFFFFFE), value)
 end
 
 function CPU:readByte(addr: number): number
@@ -292,6 +298,21 @@ local function getReg(cpu: any, i: number): number
 		return cpu.regs[16] + 4
 	end
 	return cpu.regs[i + 1]
+end
+
+-- Apply an MSR write to CPSR or SPSR. Shared by the register and immediate
+-- encodings so the byte-lane mapping exists in exactly one place.
+local function writePSR(cpu: any, useSPSR: boolean, fieldMask: number, value: number)
+	local mask = 0
+	if band(fieldMask, 1) ~= 0 then mask = bor(mask, 0x000000FF) end
+	if band(fieldMask, 2) ~= 0 then mask = bor(mask, 0x0000FF00) end
+	if band(fieldMask, 4) ~= 0 then mask = bor(mask, 0x00FF0000) end
+	if band(fieldMask, 8) ~= 0 then mask = bor(mask, 0xFF000000) end
+	if useSPSR then
+		cpu.spsr = bor(band(cpu.spsr, bnot(mask)), band(value, mask))
+	else
+		cpu:setCPSR(bor(band(cpu:cpsr(), bnot(mask)), band(value, mask)))
+	end
 end
 
 local function putReg(cpu: any, i: number, value: number)
@@ -474,6 +495,18 @@ function CPU:executeARM(op: number): number
 		return 3
 	end
 
+	-- MSR (immediate) is encoded with bits 27-23 = 00110, which lands in the
+	-- data-processing immediate space. Without this it decoded as an ordinary
+	-- immediate ALU op, so `msr cpsr_f, <flag>` never wrote the flags.
+	if op1 == 1 and band(op, 0x1000000) ~= 0 and band(op, 0x800000) == 0
+		and (op // 0x100000) % 4 == 2 and (op // 0x1000) % 16 == 15 then
+		local useSPSR = band(op, 0x400000) ~= 0
+		local fieldMask = (op // 0x10000) % 16
+		local value = ror(op % 0x100, ((op // 0x100) % 16) * 2)
+		writePSR(self, useSPSR, fieldMask, value)
+		return 1
+	end
+
 	if op1 == 0 or op1 == 1 then
 		local opcode = (op // 0x200000) % 16
 		local s = (op // 0x100000) % 2
@@ -491,18 +524,9 @@ function CPU:executeARM(op: number): number
 			local shiftType = (op // 0x20) % 4
 			if band(op, 0x10) ~= 0 then
 				local rs = (op // 0x100) % 16
-				local amount = getReg(self, rs) % 256
-				if amount == 0 then
-					operand2 = getReg(self, rm)
-				else
-					operand2 = shiftOperand(self, getReg(self, rm), shiftType, 0, true, amount)
-					shifterCarry = self.c
-				end
+				operand2, shifterCarry = shiftOperand(self, getReg(self, rm), shiftType, 0, true, getReg(self, rs) % 256)
 			else
-				local amount = (op // 0x80) % 32
-				local oldCarry = self.c
-				operand2 = shiftOperand(self, getReg(self, rm), shiftType, amount, false, 0)
-				if amount ~= 0 or shiftType == 2 then shifterCarry = self.c else shifterCarry = oldCarry end
+				operand2, shifterCarry = shiftOperand(self, getReg(self, rm), shiftType, (op // 0x80) % 32, false, 0)
 			end
 		end
 
@@ -559,17 +583,7 @@ function CPU:executeARM2(op: number, op1: number): number
 			else
 				value = getReg(self, op % 16)
 			end
-			local mask = 0
-			if band(fieldMask, 1) ~= 0 then mask = bor(mask, 0xF0000000) end
-			if band(fieldMask, 2) ~= 0 then mask = bor(mask, 0x20) end
-			if band(fieldMask, 4) ~= 0 then mask = bor(mask, 0xC0) end
-			if band(fieldMask, 8) ~= 0 then mask = bor(mask, 0xFF) end
-			if useSPSR then
-				self.spsr = bor(band(self.spsr, bnot(mask)), band(value, mask))
-			else
-				local cur = self:cpsr()
-				self:setCPSR(bor(band(cur, bnot(mask)), band(value, mask)))
-			end
+			writePSR(self, useSPSR, fieldMask, value)
 		end
 		return 1
 	end
@@ -695,9 +709,10 @@ function CPU:executeTHUMB(op: number): number
 		local amount = (op // 0x40) % 32
 		local rs = (op // 8) % 8
 		local rd = op % 8
-		local result = shiftOperand(self, self.regs[rs + 1], shiftType, amount, false, 0)
+		local result, carry = shiftOperand(self, self.regs[rs + 1], shiftType, amount, false, 0)
 		self.regs[rd + 1] = result
 		setNZ(self, result)
+		self.c = carry
 		return 1
 	end
 
@@ -728,15 +743,16 @@ function CPU:executeTHUMB(op: number): number
 		local a = self.regs[rd + 1]
 		local b = self.regs[rs + 1]
 		local result
+		local shiftCarry = nil
 		local testOnly = false
 		if opc == 0 then result = band(a, b)
 		elseif opc == 1 then result = bxor(a, b)
-		elseif opc == 2 then result = shiftOperand(self, a, 0, b % 256, true, b)
-		elseif opc == 3 then result = shiftOperand(self, a, 1, b % 256, true, b)
-		elseif opc == 4 then result = shiftOperand(self, a, 2, b % 256, true, b)
+		elseif opc == 2 then result, shiftCarry = shiftOperand(self, a, 0, b % 256, true, b)
+		elseif opc == 3 then result, shiftCarry = shiftOperand(self, a, 1, b % 256, true, b)
+		elseif opc == 4 then result, shiftCarry = shiftOperand(self, a, 2, b % 256, true, b)
 		elseif opc == 5 then result = addWithCarry(self, a, b, self.c and 1 or 0)
 		elseif opc == 6 then result = subWithCarry(self, a, b, self.c and 1 or 0)
-		elseif opc == 7 then result = shiftOperand(self, a, 3, b % 256, true, b)
+		elseif opc == 7 then result, shiftCarry = shiftOperand(self, a, 3, b % 256, true, b)
 		elseif opc == 8 then result = band(a, b); testOnly = true
 		elseif opc == 9 then result = subWithCarry(self, 0, b, 1)
 		elseif opc == 10 then result = subWithCarry(self, a, b, 1); testOnly = true
@@ -751,6 +767,7 @@ function CPU:executeTHUMB(op: number): number
 			if opc == 8 then self.c = self.c end
 		else
 			self.regs[rd + 1] = result
+			if shiftCarry ~= nil then self.c = shiftCarry end
 			if opc == 2 or opc == 3 or opc == 4 or opc == 7 then setNZ(self, result) end
 		end
 		return 1

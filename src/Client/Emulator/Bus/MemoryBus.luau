@@ -93,6 +93,13 @@ function MemoryBus:read16(addr: number): number
 		return 0
 	end
 	if top == 0x04 then return self:readIO16(band(addr, 0x3FE)) end
+	if top >= 0x0E then
+		-- SRAM/Flash are 8-bit parts: a wider read returns the same byte in
+		-- every lane. The conformance suite asserts ldrh after strb gives
+		-- 0x0101, which only holds with this behaviour.
+		local b = self.cart and self.cart.backend and self.cart.backend:read8(addr) or 0xFF
+		return b + b * 0x100
+	end
 	local a0 = self:read8(addr)
 	local a1 = self:read8(addr + 1)
 	return a0 + a1 * 0x100
@@ -108,6 +115,10 @@ function MemoryBus:read32(addr: number): number
 	if top == 0x04 then
 		-- Most IO registers are 16-bit; upper half reads as zero on the GBA.
 		return self:readIO16(band(addr, 0x3FE))
+	end
+	if top >= 0x0E then
+		local b = self.cart and self.cart.backend and self.cart.backend:read8(addr) or 0xFF
+		return b * 0x01010101
 	end
 	local a0 = self:read8(addr)
 	local a1 = self:read8(addr + 1)
