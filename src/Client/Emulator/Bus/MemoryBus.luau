@@ -48,7 +48,7 @@ function MemoryBus:tick(n: number)
 	self.cycles += n
 	if self.ppu then self.ppu:tick(n) end
 	if self.timers then self.timers:tick(n) end
-	-- audio (APU) would be advanced here too
+	if self.sound then self.sound:tick(n) end
 end
 
 -- Reads ---------------------------------------------------------------------
@@ -172,7 +172,7 @@ function MemoryBus:readIO16(off: number): number
 	if off <= 0x056 then
 		if self.ppu then return self.ppu:read16(off) end
 		return 0
-	elseif off >= 0x060 and off <= 0x0A8 then
+	elseif off >= 0x060 and off <= 0x0AF then
 		if self.sound then return self.sound:read16(off) end
 		return 0
 	elseif off >= 0x0B0 and off <= 0x0DF then
@@ -196,7 +196,7 @@ function MemoryBus:writeIO16(off: number, value: number)
 	value = bit32.band(value, 0xFFFF)
 	if off <= 0x056 then
 		if self.ppu then self.ppu:write16(off, value) end
-	elseif off >= 0x060 and off <= 0x0A8 then
+	elseif off >= 0x060 and off <= 0x0AF then
 		if self.sound then self.sound:write16(off, value) end
 	elseif off >= 0x0B0 and off <= 0x0DF then
 		if self.dma then self.dma:write16(off, value) end

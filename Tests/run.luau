@@ -294,6 +294,40 @@ do
 	check("eeprom read round trip", got == 0x5A, got)
 end
 
+-- Audio APU -------------------------------------------------------------------
+section("Audio APU")
+do
+	local Apu = require("../Client/Emulator/Hardware/Apu")
+	local apu = Apu.new(nil)
+
+	apu:write16(0x090, 0xBEEF)
+	check("wave ram round trip", apu:read16(0x090) == 0xBEEF, apu:read16(0x090))
+
+	check("apu starts disabled", apu.masterEnable == false)
+	apu:write16(0x084, 0x80)
+	check("master enable bit", apu.masterEnable == true)
+
+	apu:write16(0x080, 0x0007 + 0x1000)  -- ch1 enabled, full left volume
+	apu:write16(0x062, 0xF080)            -- duty 2, envelope volume 15
+	apu:write16(0x064, 0x8400 + 1000)     -- trigger, frequency 1000
+	check("channel 1 triggered", apu.ch[1].enabled == true)
+
+	for _ = 1, 100 do apu:tick(2000) end
+	check("samples produced", apu.samplesProduced > 0, apu.samplesProduced)
+	local batch = apu:readSamples()
+	check("sample buffer drains", #batch > 0 and #apu.buffer == 0, #batch)
+
+	local silent = true
+	for _, v in batch do if v ~= 0 then silent = false break end end
+	check("mixer output is non-silent", not silent)
+
+	-- DMA sound FIFO A
+	apu:write16(0x0A0, 0x8040)
+	apu:write16(0x082, 0x0300)
+	apu:tick(2000)
+	check("fifo A drains", #apu.fifoA < 2, #apu.fifoA)
+end
+
 print(string.format("\n%d checks, %d failures", total, failures))
 if failures > 0 then
 	error(string.format("%d test(s) failed", failures), 0)

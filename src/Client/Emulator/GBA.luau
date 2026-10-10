@@ -23,6 +23,7 @@ local Timers = require(script.Parent.Hardware.Timers)
 local Dma = require(script.Parent.Hardware.Dma)
 local Keypad = require(script.Parent.Hardware.Keypad)
 local Ppu = require(script.Parent.Hardware.Ppu)
+local Apu = require(script.Parent.Hardware.Apu)
 
 local GBA = {}
 GBA.__index = GBA
@@ -37,12 +38,14 @@ function GBA.new(options: any)
 	self.timers = Timers.new(self.interrupts)
 	self.ppu = Ppu.new(self.bus, self.interrupts)
 	self.dma = Dma.new(self.bus, self.interrupts)
+	self.apu = Apu.new(self.interrupts)
 
 	self.bus.interrupts = self.interrupts
 	self.bus.keypad = self.keypad
 	self.bus.timers = self.timers
 	self.bus.ppu = self.ppu
 	self.bus.dma = self.dma
+	self.bus.sound = self.apu
 	self.ppu.dma = self.dma
 
 	self.cpu = Arm7tdmi.new(self.bus)
@@ -78,6 +81,7 @@ function GBA:reset()
 	self.dma:reset()
 	self.keypad:reset()
 	self.ppu:reset()
+	self.apu:reset()
 	-- Hardware always begins execution at the ROM base; the 4 bytes at ROM
 	-- offset 0 are the entry-point branch instruction itself.
 	self.cpu:reset(0x08000000)
