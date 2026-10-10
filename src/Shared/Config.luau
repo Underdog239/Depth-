@@ -34,6 +34,8 @@ Config.CORE = {
 	clientSliceMs = 12,
 	-- Skip only proven unchanged THUMB wait loops, stopping before each event.
 	idleLoopSkip = true,
+	-- Dispatch hardware in batches bounded by timers, video/audio events and IO.
+	tickBatchCycles = 64,
 	-- Hard ceiling on emulated instructions per rendered frame. Prevents a
 	-- runaway frame from freezing the Roblox client (watchdog guards too).
 	maxCyclesPerFrame = Config.CYCLES_PER_FRAME * 2,

@@ -78,6 +78,7 @@ luau build/Tests/run.luau
 luau build/Tests/regressions.luau
 luau build/Tests/client_features.luau
 luau build/Tests/performance.luau
+luau build/Tests/hardware_batching.luau
 python3 tools/check_client_adapters.py
 python3 tools/check_renderer.py
 python3 tools/check_pacing.py
@@ -158,7 +159,9 @@ this compatibility fix alone does not establish that a white-screen stall is res
 
 ## Slow gameplay
 
-Balanced mode now starts with a bounded 12 ms desktop / 8 ms touch CPU slice.
+Balanced mode starts with a bounded 14 ms desktop / 12 ms touch CPU slice,
+adapting up to 18 ms / 16 ms. It measures Depth callback work separately from
+Roblox frame intervals, so a 20–30 FPS host does not starve emulation.
 Proven unchanged wait loops advance to the next hardware event; memory writes,
 volatile reads, countdowns and unknown code continue through the interpreter.
 Catch-up frames share one deadline. When game speed falls behind, the client
@@ -170,3 +173,10 @@ target. This measures emulated game progress rather than Roblox's FPS.
 `performance.luau` verifies normal/fast state equivalence with DMA, IRQ, timers
 and audio, plus raster timing and tile-renderer fingerprints. Its printed
 benchmark is synthetic; it does not establish FireRed speed on a real device.
+
+Hardware bookkeeping batches up to 64 CPU cycles, bounded by the next hardware
+event. IO synchronizes pending time before accessing registers.
+`hardware_batching.luau` compares complete machine snapshots against dispatch
+after every instruction, including timer IRQs, audio, DMA and save restoration.
+The 10–30 FPS device target remains unverified; synthetic timings are not a
+guarantee of FireRed performance on a tablet.

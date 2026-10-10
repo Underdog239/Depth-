@@ -24,7 +24,8 @@ local watchdog = {beginFrame=function() end,endFrame=function() end}
 local audio = {setActive=function() end,pump=function() end,status=function() return 'test' end}
 local ui = {setMetrics=function() end,setAudioStatus=function() end,setRunning=function() end,setStatus=function() end}
 local Diagnostics = {report=function(msg) error(msg) end}
-local adaptive = {sliceMs=12,renderEvery=1,sample=function() end,sampleGameSpeed=function() end}
+local sampledFrame, sampledWork
+local adaptive = {sliceMs=12,renderEvery=1,sample=function(_, frame, work) sampledFrame=frame; sampledWork=work end,sampleGameSpeed=function() end}
 local pixels = buffer.create(4)
 local remaining = 3
 local cost = 3
@@ -57,6 +58,7 @@ reset(3)
 onFrame(2/Config.FPS)
 assert(gba.frames==2 and #budgets==2 and #uploads==1 and uploads[1]==2,'Catch-up must advance two frames and present the latest')
 assert(math.abs(budgets[1]-12)<0.001 and math.abs(budgets[2]-9)<0.001 and time<=0.012,'Catch-up must share one deadline')
+assert(math.abs(sampledFrame-2000/Config.FPS)<0.001 and math.abs(sampledWork-6)<0.001,'Adaptive budgeting must receive actual work separately from host interval')
 reset(20)
 onFrame(2/Config.FPS)
 assert(gba.frames==0 and #uploads==0 and math.abs(time-0.012)<0.000001,'Incomplete frame must yield without presentation')

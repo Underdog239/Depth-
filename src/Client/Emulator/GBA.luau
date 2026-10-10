@@ -57,6 +57,10 @@ function GBA.new(options: any)
 	self.frames = 0
 	self.pendingCycles = 0
 	self.diag = options.diag
+	self.bus.syncIO = function()
+		self:flushCycles()
+		self.bus.tickLimit = 0 -- register writes can schedule an earlier event
+	end
 
 	if options.bios then
 		for i = 1, math.min(#options.bios, Regions.BIOS_SIZE) do
@@ -86,6 +90,7 @@ function GBA:reset()
 		for i = 1, #self.bus[name] do self.bus[name][i] = 0 end
 	end
 	self.bus.cycles, self.bus.stallCycles, self.bus.openBus = 0, 0, 0
+	self.bus.tickLimit = 0
 	self.interrupts:reset()
 	self.timers:reset()
 	self.dma:reset()
@@ -116,11 +121,8 @@ function GBA:loadSaveBytes(bytes: { number })
 	if self.cart then self.cart:loadSaveBytes(bytes) end
 end
 
--- Ticking the PPU, timers and APU costs about 38% of an emulated instruction when
--- done one instruction at a time (measured). Cycles are accumulated and flushed
--- in small batches instead: the timing error is bounded by TICK_BATCH cycles,
--- which is a few hundred nanoseconds of emulated time - far below a scanline.
-local TICK_BATCH = 4
+-- Accumulate ordinary CPU work between hardware events. Register accesses
+-- synchronize immediately, and the cached limit never exceeds the next event.
 
 -- A skipped wait must stop before anything can change its inputs: scanline
 -- transitions/DMA/IRQs, timer overflow/FIFO refill, or an audio clock edge.
@@ -173,19 +175,24 @@ function GBA:stepInstruction(fastHalt: boolean?)
 	local cycles = self.cpu:step() + self.bus.stallCycles
 	self.bus.stallCycles = 0
 	local pending = self.pendingCycles + cycles
-	if pending >= TICK_BATCH then
-		self.bus:tick(pending)
-		self.pendingCycles = 0
-	else
-		self.pendingCycles = pending
+	self.pendingCycles = pending
+	local limit = self.bus.tickLimit
+	if limit == 0 then
+		limit = math.min(Config.CORE.tickBatchCycles, self:nextEventCycles())
+		self.bus.tickLimit = limit
 	end
+	if pending >= limit then self:flushCycles() end
 end
 
 --- Flush cycles still held back by batching.
 function GBA:flushCycles()
-	if self.pendingCycles > 0 then
-		self.bus:tick(self.pendingCycles)
-		self.pendingCycles = 0
+	local pending = self.pendingCycles
+	-- Clear before dispatch: timer/DMA callbacks may access IO recursively.
+	self.pendingCycles = 0
+	while pending > 0 do
+		local step = math.min(pending, self:nextEventCycles())
+		self.bus:tick(step)
+		pending -= step
 	end
 end
 

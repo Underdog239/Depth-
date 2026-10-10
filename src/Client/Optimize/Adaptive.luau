@@ -3,9 +3,10 @@
 local Adaptive = {}
 Adaptive.__index = Adaptive
 function Adaptive.new(touch: boolean?)
-	local initial, maximum = touch and 8 or 12, touch and 10 or 14
+	local initial, maximum = touch and 12 or 14, touch and 16 or 18
 	return setmetatable({ mode = "balanced", initial = initial, maximum = maximum, sliceMs = initial,
-		slowFrames = 0, fastFrames = 0, averageMs = 16.7, presentEvery = 1,
+		slowFrames = 0, fastFrames = 0, averageMs = 16.7, averageWorkMs = initial,
+		targetWorkMs = touch and 16 or 18, presentEvery = 1,
 		renderEvery = 1, recoverySeconds = 0 }, Adaptive)
 end
 function Adaptive:setLowPower(enabled: boolean)
@@ -29,18 +30,21 @@ function Adaptive:sampleGameSpeed(fps: number)
 		end
 	else self.recoverySeconds = 0 end
 end
-function Adaptive:sample(frameMs: number)
+function Adaptive:sample(frameMs: number, workMs: number)
 	self.averageMs += (math.clamp(frameMs, 1, 250) - self.averageMs) * 0.05
-	if self.averageMs > 35 then
+	self.averageWorkMs += (math.clamp(workMs, 0, 250) - self.averageWorkMs) * 0.05
+	-- A host capped at 20/30 FPS must not starve emulation. Judge the time
+	-- Depth consumed in this callback, independently of Roblox's frame interval.
+	if self.averageWorkMs > self.targetWorkMs + 2 then
 		self.slowFrames += 1; self.fastFrames = 0
-	elseif self.averageMs < 20 then
+	elseif self.averageWorkMs < self.targetWorkMs then
 		self.fastFrames += 1; self.slowFrames = 0
 	else self.slowFrames, self.fastFrames = 0, 0 end
 	if self.slowFrames >= 20 then
-		self.sliceMs = math.max(2, self.sliceMs - 1)
+		self.sliceMs = math.max(self.mode == "battery" and 2 or 6, self.sliceMs - 1)
 		self.presentEvery = 2
 		self.slowFrames = 0
-	elseif self.fastFrames >= 180 then
+	elseif self.fastFrames >= 60 then
 		self.sliceMs = math.min(self.mode == "battery" and 3 or self.maximum, self.sliceMs + 1)
 		self.presentEvery = self.mode == "battery" and 2 or 1
 		self.fastFrames = 0

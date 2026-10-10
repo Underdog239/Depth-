@@ -251,9 +251,10 @@ local function onFrame(dt: number)
 		end
 	end
 
-	local frameMs = math.max(dt, os.clock() - frameStart) * 1000
+	local workMs = (os.clock() - frameStart) * 1000
+	local frameMs = math.max(dt * 1000, workMs)
 	if playing then
-		adaptive:sample(frameMs)
+		adaptive:sample(frameMs, workMs)
 		speedTime += dt
 		if speedTime >= 1 then
 			gameFps = speedFrames / speedTime

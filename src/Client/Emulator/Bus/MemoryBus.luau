@@ -32,6 +32,7 @@ function MemoryBus.new()
 		io = table.create(0x400, 0),
 		cycles = 0,
 		stallCycles = 0,
+		tickLimit = 0,
 		openBus = 0,
 		-- components (assigned by GBA.luau)
 		ppu = nil, dma = nil, timers = nil, keypad = nil, interrupts = nil, cart = nil,
@@ -48,6 +49,7 @@ end
 --- Advance every timed component by `n` master cycles.
 function MemoryBus:tick(n: number)
 	if n <= 0 then return end
+	self.tickLimit = 0
 	self.cycles += n
 	if self.ppu then self.ppu:tick(n) end
 	if self.timers then self.timers:tick(n) end
@@ -271,6 +273,7 @@ end
 -- IO routing ----------------------------------------------------------------
 
 function MemoryBus:readIO16(off: number): number
+	if self.syncIO then self.syncIO() end
 	off = band(off, 0x3FE)
 	if off <= 0x056 then
 		if self.ppu then return self.ppu:read16(off) end
@@ -295,6 +298,7 @@ function MemoryBus:readIO16(off: number): number
 end
 
 function MemoryBus:writeIO16(off: number, value: number)
+	if self.syncIO then self.syncIO() end
 	off = band(off, 0x3FE)
 	value = band(value, 0xFFFF)
 	if off <= 0x056 then
