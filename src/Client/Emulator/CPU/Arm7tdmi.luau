@@ -54,6 +54,7 @@ function CPU.new(bus: any)
 			[MODE_ABT] = { r13 = 0, r14 = 0 },
 			[MODE_UND] = { r13 = 0, r14 = 0 },
 		},
+		sharedLow = { 0, 0, 0, 0, 0 },
 		cycles = 0,
 		halted = false,
 		-- diagnostics counters
@@ -93,23 +94,35 @@ end
 function CPU:_setMode(newMode: number)
 	local old = self.mode
 	if old == newMode then return end
-	local ok = bankKey(old)
-	local ob = self.bank[ok]
+
+	-- R8-R12 are shared by every mode except FIQ, which owns a private set. The
+	-- previous implementation banked FIQ's copies but never preserved the
+	-- shared ones, so switching out of FIQ leaked its registers into the
+	-- caller's context.
+	local oldIsFiq = bankKey(old) == MODE_FIQ
+	local newIsFiq = bankKey(newMode) == MODE_FIQ
+
+	local ob = self.bank[bankKey(old)]
 	ob.r13 = self.regs[14]
 	ob.r14 = self.regs[15]
-	if ok == MODE_FIQ then
+	if oldIsFiq then
 		ob.r8, ob.r9, ob.r10, ob.r11, ob.r12 = self.regs[9], self.regs[10], self.regs[11], self.regs[12], self.regs[13]
+	else
+		local sl = self.sharedLow
+		sl[1], sl[2], sl[3], sl[4], sl[5] = self.regs[9], self.regs[10], self.regs[11], self.regs[12], self.regs[13]
 	end
 	if old ~= MODE_USER and old ~= MODE_SYS then ob.spsr = self.spsr end
 
 	self.mode = newMode
-	local nk = bankKey(newMode)
-	local nb = self.bank[nk]
+	local nb = self.bank[bankKey(newMode)]
 	self.regs[14] = nb.r13 or 0
 	self.regs[15] = nb.r14 or 0
-	if nk == MODE_FIQ then
+	if newIsFiq then
 		self.regs[9], self.regs[10], self.regs[11], self.regs[12], self.regs[13] =
 			nb.r8 or 0, nb.r9 or 0, nb.r10 or 0, nb.r11 or 0, nb.r12 or 0
+	else
+		local sl = self.sharedLow
+		self.regs[9], self.regs[10], self.regs[11], self.regs[12], self.regs[13] = sl[1], sl[2], sl[3], sl[4], sl[5]
 	end
 	if newMode ~= MODE_USER and newMode ~= MODE_SYS then self.spsr = nb.spsr or 0 end
 end
@@ -278,7 +291,7 @@ function CPU:readWord(addr: number): number
 end
 
 function CPU:writeWord(addr: number, value: number)
-	self.bus:write32(band(addr, 0xFFFFFFC), value)
+	self.bus:write32(band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readHalf(addr: number): number
@@ -566,7 +579,16 @@ function CPU:executeARM(op: number): number
 			setNZ(self, result)
 			if not (isSub or isAdd) then self.c = shifterCarry end
 		end
-		if writeBack then putReg(self, rd, result) end
+		if writeBack then
+			if rd == 15 and s == 1 then
+				-- Data processing with Rd = PC and S = 1 is an exception return:
+				-- CPSR is reloaded from SPSR and execution continues at the result.
+				self:setCPSR(self.spsr)
+				self:branch(result)
+			else
+				putReg(self, rd, result)
+			end
+		end
 		return 1
 	end
 

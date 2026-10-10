@@ -147,10 +147,17 @@ function MemoryBus:write8(addr: number, value: number)
 			self:writeIO16(off, bor(band(cur, 0x00FF), lshift(value, 8)))
 		end
 	elseif top == 0x05 then
-		self.pal[band(addr, Regions.PAL_MASK) + 1] = value
+		-- 8-bit stores to palette are replicated across both lanes of the
+		-- addressed halfword.
+		local off = band(addr, Regions.PAL_MASK)
+		self.pal[off + 1] = value
+		self.pal[bor(off, 1) + 1] = value
 	elseif top == 0x06 then
-		-- 8-bit writes to VRAM are ignored on real hardware
-		return
+		-- VRAM has no 8-bit write path: the byte is replicated across both
+		-- lanes of the addressed halfword, as hardware does.
+		local off = band(Regions.vramOffset(addr), bnot(1))
+		self.vram[off + 1] = value
+		self.vram[off + 2] = value
 	elseif top == 0x07 then
 		-- OAM does not support 8-bit writes on real hardware.
 		return
@@ -165,6 +172,7 @@ end
 
 function MemoryBus:write16(addr: number, value: number)
 	local top = addr // 0x1000000
+	if top < 0x0E then addr = band(addr, bnot(1)) end
 	if top == 0x04 then return self:writeIO16(band(addr, 0x3FE), value) end
 	if top >= 0x0E then
 		-- SRAM/Flash are 8-bit parts. A wider store latches a single byte,
@@ -198,6 +206,9 @@ end
 
 function MemoryBus:write32(addr: number, value: number)
 	local top = addr // 0x1000000
+	-- Address bits are region-specific: 16/32-bit parts ignore them, while the
+	-- 8-bit save chips use A0/A1 as the byte-lane selector.
+	if top < 0x0E then addr = band(addr, bnot(3)) end
 	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
 		self:writeIO16(band(addr, 0x3FE), band(value, 0xFFFF))

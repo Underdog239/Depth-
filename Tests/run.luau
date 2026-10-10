@@ -111,7 +111,13 @@ do
 	check("iwram 16-bit round trip", bus:read16(0x03000000) == 0x1234)
 	bus:write16(0x06000000, 0x00FF)
 	bus:write8(0x06000000, 0x77) -- must be ignored on VRAM
-	check("vram ignores 8-bit writes", bus:read16(0x06000000) == 0x00FF, bus:read16(0x06000000))
+	-- VRAM has no 8-bit path: the byte is replicated across both lanes of the
+	-- addressed halfword. (This assertion previously encoded the wrong
+	-- behaviour and was corrected by the conformance suite.)
+	bus:write8(0x06000000, 0x77)
+	check("vram replicates byte stores", bus:read16(0x06000000) == 0x7777, string.format("0x%04X", bus:read16(0x06000000)))
+	bus:write8(0x05000020, 0x12)
+	check("palette replicates byte stores", bus:read16(0x05000020) == 0x1212, string.format("0x%04X", bus:read16(0x05000020)))
 end
 
 -- CPU: ARM -------------------------------------------------------------------
