@@ -138,6 +138,11 @@ No ROMs or BIOS images are included. The emulator uses a **HLE BIOS**, so it can
 boot commercial titles without shipping Nintendo's copyrighted BIOS; supply your
 own `bios.bin` if you want cycle-exact BIOS behaviour.
 
+## Licence
+
+MIT - see [LICENSE](LICENSE). This repository bundles no third-party code; each
+dependency is credited in [CREDITS.md](CREDITS.md) under its own licence.
+
 ## Credits
 
 This project's own code is original. It uses and credits the following:
