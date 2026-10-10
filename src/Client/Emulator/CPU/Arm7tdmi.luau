@@ -358,16 +358,21 @@ end
 function CPU:executeARM(op: number): number
 	local cond = op // 0x10000000
 	if cond == 0xF then
-		if (op // 0x1000000) % 16 == 0xF then
-			self:swi(op % 0x1000000)
-			return 3
-		end
+		-- ARMv4T reserves condition 1111 for the unconditional space.
 		self:undefined()
 		return 3
 	end
 	if not self:condition(cond) then return 1 end
 
-		local op1 = (op // 0x2000000) % 8
+	-- SWI is `cond 1111 comment`: the marker is bits 27-24, NOT the condition
+	-- field. Testing cond == 0xF meant every real SWI fell through to the
+	-- undefined handler, so the HLE BIOS was never reached.
+	if (op // 0x1000000) % 16 == 0xF then
+		self:swi(rshift(op % 0x1000000, 16) % 256)
+		return 3
+	end
+
+	local op1 = (op // 0x2000000) % 8
 	local nib = (op // 16) % 16
 	local kind = (op // 0x1000000) % 16
 

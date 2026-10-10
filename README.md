@@ -137,3 +137,22 @@ cycle budget per frame and a profiler that shows where time goes. See
 No ROMs or BIOS images are included. The emulator uses a **HLE BIOS**, so it can
 boot commercial titles without shipping Nintendo's copyrighted BIOS; supply your
 own `bios.bin` if you want cycle-exact BIOS behaviour.
+
+## Credits
+
+This project's own code is original. It uses and credits the following:
+
+| Component | Author | Licence | Use |
+|---|---|---|---|
+| [jsmolka/gba-tests](https://github.com/jsmolka/gba-tests) | Julian Smolka (c) 2019 | MIT | ARM/THUMB/PPU/save conformance ROMs, fetched at test time |
+| [luau](https://github.com/luau-lang/luau) | Luau contributors | MIT | standalone interpreter running the headless harness |
+| [rojo](https://github.com/rojo-rbx/rojo) | Rojo contributors | MPL-2.0 | optional Studio sync (external tool) |
+| [mgba-emu/suite](https://github.com/mgba-emu/suite) | mGBA contributors | MIT | planned GBA conformance coverage |
+| [mooneye-gb](https://github.com/Gekkio/mooneye-gb) | Gekkio | MIT | planned GB/GBC conformance coverage |
+
+**No ROMs and no BIOS images are included in this repository.** Commercial ROMs
+are never bundled; the BIOS is a from-scratch high-level emulation so no
+copyrighted BIOS image is needed. Third-party test ROMs are downloaded on demand
+into git-ignored directories and carry their upstream attribution with them.
+
+See [CREDITS.md](CREDITS.md) for the full notice, including pinned commits.
