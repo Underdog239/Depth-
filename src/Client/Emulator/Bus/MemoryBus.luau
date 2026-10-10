@@ -72,8 +72,11 @@ function MemoryBus:read8(addr: number): number
 	elseif top <= 0x0D then
 		return self.cart and self.cart:read8(bit32.band(addr, 0x1FFFFFF)) or 0
 	else
-		-- SRAM/Flash, 8-bit only (mirrored every 64 KiB)
-		return self.cart and (self.cart:saveBytes()[bit32.band(addr, 0xFFFF) + 1] or 0) or 0
+		-- SRAM / Flash: 8-bit only, handled by the save backend's state machine.
+		if self.cart and self.cart.backend then
+			return self.cart.backend:read8(addr)
+		end
+		return 0xFF
 	end
 end
 
@@ -127,8 +130,8 @@ function MemoryBus:write8(addr: number, value: number)
 	elseif top <= 0x0D then
 		return -- ROM read-only
 	else
-		if self.cart then
-			self.cart:saveBytes()[bit32.band(addr, 0xFFFF) + 1] = value
+		if self.cart and self.cart.backend then
+			self.cart.backend:write8(addr, value)
 		end
 	end
 end

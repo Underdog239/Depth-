@@ -228,6 +228,72 @@ do
 	check("cpu parked in the idle loop", gba.cpu.regs[16] == 0x080000E4, string.format("0x%08X", gba.cpu.regs[16]))
 end
 
+-- Save backends ---------------------------------------------------------------
+section("Save backends")
+do
+	local SaveBackend = require("../Client/Emulator/Save/SaveBackend")
+
+	-- SRAM: plain memory mapped byte access
+	local sram = SaveBackend.new("SRAM", 0x80000)
+	sram:write8(0x0E000100, 0x42)
+	check("sram write/read", sram:read8(0x0E000100) == 0x42, sram:read8(0x0E000100))
+	check("sram mirrors 32K", sram:read8(0x0E008100) == 0x42, sram:read8(0x0E008100))
+
+	-- Flash: full command sequence (unlock, program, read back)
+	local flash = SaveBackend.new("FLASH512", 0x400000)
+	local base = 0x0E000000
+	local function flashCmd(a, v) flash:write8(base + a, v) end
+	flashCmd(0x5555, 0xAA)
+	flashCmd(0x2AAA, 0x55)
+	flashCmd(0x5555, 0xA0)
+	flash:write8(base + 0x10, 0x99)
+	check("flash program", flash:read8(base + 0x10) == 0x99, flash:read8(base + 0x10))
+	-- sector erase then verify it cleared
+	flashCmd(0x5555, 0xAA)
+	flashCmd(0x2AAA, 0x55)
+	flashCmd(0x5555, 0x80)
+	flashCmd(0x5555, 0xAA)
+	flashCmd(0x2AAA, 0x55)
+	flashCmd(0x0000, 0x30)
+	check("flash sector erase", flash:read8(base + 0x10) == 0xFF, flash:read8(base + 0x10))
+	-- manufacturer ID mode
+	flashCmd(0x5555, 0xAA)
+	flashCmd(0x2AAA, 0x55)
+	flashCmd(0x5555, 0x90)
+	check("flash id mode", flash:read8(base) == 0x62, flash:read8(base))
+	flash:write8(base, 0xF0)
+
+	-- EEPROM: serial write then serial read round trip
+	local ee = SaveBackend.new("EEPROM", 0x80000) -- 512 B, 6 address bits
+	local function pushBits(bits) for _, b in bits do ee:eepromWriteHalf(b) end end
+	local function addrBits(a, n)
+		local out = {}
+		for i = n - 1, 0, -1 do table.insert(out, a // 2 ^ i % 2) end
+		return out
+	end
+	local function byteBits(v)
+		local out = {}
+		for i = 7, 0, -1 do table.insert(out, v // 2 ^ i % 2) end
+		return out
+	end
+	-- write 0x5A to address 3: [0][cmd 10][addr][data]
+	local frame = { 0, 1, 0 }
+	for _, b in addrBits(3, 6) do table.insert(frame, b) end
+	for _, b in byteBits(0x5A) do table.insert(frame, b) end
+	pushBits(frame)
+	check("eeprom stored byte", ee.data[4] == 0x5A, ee.data[4])
+	-- read it back: [0][cmd 11][addr] then 9 halfwords per byte
+	local rframe = { 0, 1, 1 }
+	for _, b in addrBits(3, 6) do table.insert(rframe, b) end
+	pushBits(rframe)
+	local got = 0
+	for i = 1, 9 do
+		local bit = ee:eepromReadHalf()
+		if i > 1 then got = got * 2 + bit end
+	end
+	check("eeprom read round trip", got == 0x5A, got)
+end
+
 print(string.format("\n%d checks, %d failures", total, failures))
 if failures > 0 then
 	error(string.format("%d test(s) failed", failures), 0)

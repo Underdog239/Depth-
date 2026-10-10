@@ -11,6 +11,7 @@
  ]]
 
 local Util = require(game:GetService("ReplicatedStorage").Shared.Util)
+local SaveBackend = require(script.Parent.Parent.Save.SaveBackend)
 
 export type Cartridge = {
 	rom: { number },
@@ -91,7 +92,8 @@ function Cartridge.new(romBytes: { number }): Cartridge
 		rom = romBytes,
 		size = #romBytes,
 		info = info,
-		_sram = {} :: { number },
+		-- Battery-backed save chip: SRAM, Flash or EEPROM (or a null backend).
+		backend = SaveBackend.new(info.saveType, #romBytes),
 	}, Cartridge) :: any
 end
 
@@ -111,14 +113,11 @@ function Cartridge:read32(offset: number): number
 end
 
 function Cartridge:saveBytes(): { number }
-	return self._sram
+	return self.backend:readBytes()
 end
 
 function Cartridge:loadSaveBytes(bytes: { number })
-	-- copy up to 64 KiB
-	for i = 1, math.min(#bytes, 0x10000) do
-		self._sram[i] = bytes[i]
-	end
+	self.backend:loadBytes(bytes)
 end
 
 Cartridge.SAVE_EEPROM = SAVE_EEPROM

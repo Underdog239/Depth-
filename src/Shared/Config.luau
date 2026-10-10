@@ -1,9 +1,11 @@
 --!strict
---[[ Shared/Config.luau -- single source of truth for tunables.
-     Everything the "optimizer" and "diagnostics" layers care about lives here
-     so behaviour is universal across client (and optional server) contexts. ]]
+--[[ Shared/Config.luau -- single source of truth for tunables (v1.0).
+     Every layer (core, renderer, diagnostics, audio, saves) reads from here so
+     behaviour is consistent across the whole build. ]]
 
 local Config = {}
+
+Config.VERSION = "1.0.0"
 
 -- Emulation clock targets ---------------------------------------------------
 -- GBA: 16.777216 MHz CPU, 59.7275 Hz display, 280896 cycles per frame.
@@ -16,10 +18,11 @@ Config.FRAME_PIXELS = Config.SCREEN_W * Config.SCREEN_H
 
 -- Renderer ------------------------------------------------------------------
 Config.RENDER = {
-	-- Integer scale applied to the 240x160 surface.
 	scale = 2,
-	-- "native" blits every produced frame; "adaptive" drops frames to hold FPS.
-	mode = "native" :: "native" | "adaptive" | "tile",
+	-- "native"   : present every produced frame
+	-- "adaptive" : present on a schedule that holds the target FPS
+	-- "grid"     : force the coarse Frame-grid backend (fallback / debugging)
+	mode = "native" :: "native" | "adaptive" | "grid",
 	minFps = 30,
 	targetFps = 60,
 	autoScale = true,
@@ -28,38 +31,56 @@ Config.RENDER = {
 -- Core loop -----------------------------------------------------------------
 Config.CORE = {
 	-- Hard ceiling on emulated instructions per rendered frame. Prevents a
-	-- runaway frame from freezing the Roblox client (watchdog also guards).
+	-- runaway frame from freezing the Roblox client (watchdog guards too).
 	maxCyclesPerFrame = Config.CYCLES_PER_FRAME * 2,
-	-- Allow the loop to skip VBlank detection and run a fixed budget instead.
+	-- When true, ignore VBlank pacing and run a fixed cycle budget per frame
+	-- (used for benchmarking and for titles that need a speed nudge).
 	skipFrameCap = false,
-	-- Enable dynamic recompilation-lite block cache (see Optimize/BlockCache).
-	useBlockCache = true,
-	-- Emit IRQ diagnostics + trace only when true (very costly).
+	fixedCyclesPerFrame = Config.CYCLES_PER_FRAME,
+	-- Emit a per-instruction trace. Extremely costly; diagnostics only.
 	traceInstructions = false,
+}
+
+-- Audio ---------------------------------------------------------------------
+-- Roblox exposes no PCM playback API, so the APU is modelled fully and its
+-- samples are exposed through a sink. See docs/AUDIO.md for the wall and the
+-- optional synth adapter that can drive Roblox Sound objects per channel.
+Config.AUDIO = {
+	enabled = true,
+	-- APU mixing rate in Hz. The GBA's sound clock is 2^24/(soundbias); 32768
+	-- is a good trade-off between fidelity and Lua cost.
+	sampleRate = 32768,
+	-- "off"      : model only (registers correct, no output)
+	-- "monitor"  : compute and expose samples, no playback
+	-- "synth"    : additionally drive the Roblox synth adapter (if available)
+	mode = "monitor" :: "off" | "monitor" | "synth",
+	master = 0.6,
+}
+
+-- Saves ---------------------------------------------------------------------
+Config.SAVE = {
+	-- Seconds between automatic battery-save flushes to the persistence backend.
+	autosaveInterval = 20,
+	-- SRAM/Flash/EEPROM sizes (bytes) used when the header is ambiguous.
+	defaultSize = 0x8000,
 }
 
 -- Diagnostics ---------------------------------------------------------------
 Config.DIAG = {
 	enabled = true,
-	-- Background scanner cadence (seconds).
 	scanInterval = 2.0,
-	-- Persist findings so they survive a rejoin: Roblox DataStore (server) or
-	-- an in-memory + LogService mirror (client).
 	persist = true,
 	dataStoreName = "GBADIAG_v1",
-	-- Ring buffer size for captured events.
 	maxEvents = 500,
-	-- Minimum severity to keep. "info"|"warn"|"error"|"fatal"
 	minSeverity = "info",
-	-- Categories the catcher tracks by default.
 	categories = { "error", "bug", "vulnerability", "unfinished" },
-	-- Watchdog: if the emulator loop stalls longer than this, capture a report.
 	stallMs = 250,
+	-- Push locally caught findings to the server for cross-session persistence.
+	syncInterval = 30,
 }
 
 -- Input ---------------------------------------------------------------------
 Config.INPUT = {
-	-- Gamepad/Keyboard -> GBA key bit. Bits follow REG_KEYINPUT ordering.
 	-- 0=A 1=B 2=Select 3=Start 4=Right 5=Left 6=Up 7=Down 8=R 9=L
 	defaultKeyboard = {
 		[Enum.KeyCode.Z] = 0,
@@ -85,10 +106,7 @@ Config.INPUT = {
 		[Enum.KeyCode.ButtonR1] = 8,
 		[Enum.KeyCode.ButtonL1] = 9,
 	},
-	-- Deadzone for analog sticks mapped to the D-Pad.
 	stickDeadzone = 0.25,
 }
-
-Config.VERSION = "0.1.0"
 
 return Config

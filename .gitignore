@@ -18,3 +18,4 @@ bios/
 *.gba
 *.agb
 *.bin
+.tools/

@@ -91,6 +91,27 @@ function Dma:_transfer(i: number)
 	local bus = self.bus
 	local startCycle = 1
 
+	-- EEPROM is not memory mapped: it is clocked serially through DMA3 at
+	-- 0x0D000000. Intercept those transfers and feed the save backend.
+	local srcEE = sad >= 0x0D000000 and sad < 0x0E000000
+	local dstEE = dad >= 0x0D000000 and dad < 0x0E000000
+	if srcEE or dstEE then
+		local backend = bus.cart and bus.cart.backend
+		if backend and backend.type == "EEPROM" then
+			for _ = 1, count do
+				if srcEE then
+					bus:write16(dad, backend:eepromReadHalf())
+				else
+					backend:eepromWriteHalf(bus:read16(sad))
+				end
+			end
+			if bit32.band(c.cnt, 0x4000) ~= 0 then self.interrupts:raise(Interrupts.DMA0 + (i - 1)) end
+			c.cnt = bit32.band(c.cnt, bit32.bnot(0x8000))
+			bus:addCycles(4 * count)
+			return
+		end
+	end
+
 	if unit32 then
 		for _ = 1, count do
 			bus:write32(dad, bus:read32(sad))
