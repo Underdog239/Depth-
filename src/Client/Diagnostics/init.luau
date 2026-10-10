@@ -137,7 +137,10 @@ local function runScan()
 	-- Source is immutable/protected in ordinary clients. Probe only once.
 	if not Diag._sourceScanned then
 		Diag._sourceScanned = true
-		local ok, hits = pcall(StaticScan.scanInstance, script.Parent, {maxLines = 2000})
+		local ok, hits = false, nil
+		if script then
+			ok, hits = pcall(StaticScan.scanInstance, script.Parent, {maxLines = 2000})
+		end
 		if ok and hits then
 			for _, f in StaticScan.toFindings(hits) do Diag.onFinding:fire(Diag._store:add(f)) end
 		end

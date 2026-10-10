@@ -23,6 +23,25 @@ colour. The demo is original project code; no external ROM or BIOS is needed.
 For live development, use `rojo serve default.project.json` and connect the
 Rojo Studio plugin. See [the testing guide](docs/TESTING.md) for a full checklist.
 
+## Run as one client script
+
+`installer/Depth-runtime.luau` contains the whole client as ordinary Luau
+functions. Paste its full contents into **one LocalScript in
+StarterPlayerScripts**, then Play or publish your own experience. It runs in
+both Studio play sessions and published Roblox clients. No separate Shared
+modules or script `.Source` writes are required; small ROM paste/demo work
+immediately, and an existing `ReplicatedStorage.Assets.ROM` is still supported.
+
+The runtime requires Roblox client services and a local player. It is not
+portable to plain Lua, Roblox servers or a browser. It does not enable HTTP or
+`loadstring` in ordinary LocalScripts; use the full source as the LocalScript.
+Source diagnostics use the bundled repository report because individual module
+Instances no longer exist. Running it again preserves the existing session.
+
+`Depth-install.luau` now chooses a mode automatically: in a running client it
+starts the same bundled runtime; in Studio Edit mode it installs the normal
+module hierarchy. Server execution gives a clear client-context error.
+
 ## Install into an existing Studio place
 
 Stop Play and open Studio's **Command Bar** from the View tab. Enable
@@ -33,8 +52,8 @@ assert(loadstring(game:GetService("HttpService"):GetAsync("https://raw.githubuse
 ```
 
 Press **Play**, then **Run demo**, and save your place to keep the installation.
-This command requires Studio's Command Bar in Edit mode. It creates the client
-and its modules; it is not an in-game LocalScript loader. You can also
+This HTTP command is for Studio's Command Bar in Edit mode. It installs the
+client and its modules. For direct client execution, use the runtime above. You can also
 paste the full contents of `installer/Depth-install.luau` into the Command Bar
 without enabling HTTP. The installer refuses to overwrite existing
 `ReplicatedStorage.Assets`, `ReplicatedStorage.Shared`,
@@ -53,6 +72,7 @@ Rebuild the installer after changing source:
 ```bash
 rojo build default.project.json -o Depth-testing.rbxlx
 python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.luau
+python3 tools/build_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau
 ```
 
 ## Load a game

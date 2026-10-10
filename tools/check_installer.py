@@ -61,6 +61,7 @@ local game = {}
 function game:GetService(name)
     if name == 'RunService' then return {
         IsStudio = function() return studio end,
+        IsClient = function() return false end,
         IsRunning = function() return running end,
     } end
     return assert(services[name], name)
@@ -121,7 +122,7 @@ for _, mode in ipairs({'outsideStudio', 'playing', 'source', 'parent'}) do
         end
     end
 end
-print('PASS: full XML hierarchy/source fidelity (' .. count .. ' instances), collisions, Studio guards, and failure cleanup')
+print('PASS: full XML hierarchy/source fidelity (' .. count .. ' instances), collisions, execution-context guards, and failure cleanup')
 '''
 script='local expected = {\n'+',\n'.join(expected)+'\n}\n'+mock+Path(args.installer).read_text()+checks
 with tempfile.TemporaryDirectory(prefix='depth-installer-') as temporary:

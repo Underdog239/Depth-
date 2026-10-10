@@ -276,7 +276,7 @@ local function shiftOperand(cpu, value, type, amount, byRegister, regValue)
 			carry = band(result, 0x80000000) ~= 0
 		end
 	end
-	
+
 	-- The carry-out is part of the shifter contract. Callers that set flags need
 	-- it, and dropping it silently broke every shifted-flag test.
 	return result, carry

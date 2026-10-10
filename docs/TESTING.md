@@ -56,6 +56,13 @@ These checks require Roblox Studio and remain manual acceptance gates.
 15. **Performance:** follow the ten-minute real-device checklist in
     docs/PERFORMANCE.md. Automated passes do not certify midrange support.
 
+16. **Standalone runtime:** use a fresh place with only a LocalScript containing
+    Depth-runtime.luau. Verify no Shared folder is needed. Run demo, open menus,
+    test touch/controller/ROM paste and diagnostics. In a published client,
+    verify the same startup. Re-running keeps one UI/session. Roblox server
+    execution is intentionally unsupported. Actual Studio/published-device
+    acceptance remains outstanding; mocks only cover the runtime path.
+
 ## Automated verification
 
 Validated tooling for this branch: Python 3.9.25, Luau 0.742 and Rojo 7.7.1.
@@ -74,6 +81,8 @@ rojo build default.project.json -o Depth-testing.rbxlx
 python3 tools/check_project.py Depth-testing.rbxlx
 python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.luau
 python3 tools/check_installer.py Depth-testing.rbxlx installer/Depth-install.luau
+python3 tools/build_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau
+python3 tools/check_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau installer/Depth-install.luau
 ```
 
 `check_project.py` checks static module references and rejects server scripts,

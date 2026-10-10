@@ -40,9 +40,13 @@ publish the updated branch. Use the installer in Studio's Command Bar while
 stopped. It refuses to overwrite existing objects: back up custom ROM/config,
 remove the previous Depth objects, then reinstall. Save the place afterward.
 A protected Roblox LocalScript cannot download and replace its own source.
+The standalone Depth-runtime.luau avoids runtime source writes by compiling
+module factories into one LocalScript. The installer selects this same runtime
+when it is executed in an already running client.
 
 ```bash
 python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
 rojo build default.project.json -o Depth-testing.rbxlx
 python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.luau
+python3 tools/build_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau
 ```
