@@ -51,6 +51,7 @@ function Dashboard:_build(parent: Instance?)
 	gui.Name = "GBADiagDashboard"
 	gui.ResetOnSpawn = false
 	gui.Enabled = false
+	gui.DisplayOrder = 10
 	gui.Parent = parent or game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 	self.gui = gui
 
@@ -72,6 +73,10 @@ function Dashboard:_build(parent: Instance?)
 	title.Position = UDim2.fromOffset(10, 8)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = frame
+	local close = makeButton("Close", frame)
+	close.Size = UDim2.fromOffset(60, 24)
+	close.Position = UDim2.new(1, -70, 0, 8)
+	close.MouseButton1Click:Connect(function() gui.Enabled = false end)
 
 	local summary = Instance.new("TextLabel")
 	summary.Name = "Summary"
@@ -99,7 +104,7 @@ function Dashboard:_build(parent: Instance?)
 		b.Size = UDim2.fromOffset(96, 26)
 		b.Position = UDim2.fromOffset((i - 1) * 100, 0)
 		b.MouseButton1Click:Connect(function()
-			self.filter = (name == "all") and nil or name
+			self.filter = if name == "all" then nil else name
 			self:refresh()
 		end)
 	end

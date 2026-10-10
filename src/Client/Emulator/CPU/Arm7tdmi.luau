@@ -66,7 +66,9 @@ end
 
 --- Reset into Supervisor mode at the ROM entry point (HLE-friendly boot).
 function CPU:reset(entryPoint: number?)
-	for i = 1, 16 do self.regs[i] = 0 end
+	local fresh = CPU.new(self.bus)
+	for k, v in fresh do self[k] = v end
+	self._intrWaitFlags = nil
 	self.mode = MODE_SVC
 	self.thumb = false
 	self.n = false; self.z = false; self.c = false; self.v = false
@@ -287,7 +289,7 @@ CPU._setNZ = setNZ
 -- Memory access helpers -----------------------------------------------------
 
 function CPU:readWord(addr: number): number
-	return self.bus:read32(band(addr, 0xFFFFFFC))
+	return rrotate(self.bus:read32(band(addr, 0xFFFFFFFC)), (addr % 4) * 8)
 end
 
 function CPU:writeWord(addr: number, value: number)
@@ -295,7 +297,7 @@ function CPU:writeWord(addr: number, value: number)
 end
 
 function CPU:readHalf(addr: number): number
-	return self.bus:read16(band(addr, 0xFFFFFFF))
+	return rrotate(self.bus:read16(band(addr, 0xFFFFFFFE)), (addr % 2) * 8)
 end
 
 function CPU:writeHalf(addr: number, value: number)
@@ -351,7 +353,7 @@ function CPU:branch(target: number, fromThumbSwitch: boolean?)
 		self.thumb = band(target, 1) ~= 0
 		target = band(target, 0xFFFFFFFE)
 	end
-	self.regs[16] = target % 0x10000000
+	self.regs[16] = band(target, self.thumb and 0xFFFFFFFE or 0xFFFFFFFC)
 end
 
 -- Exceptions -----------------------------------------------------------------
@@ -414,51 +416,55 @@ function CPU:executeARM(op: number): number
 		return 3
 	end
 
+	if band(op, 0x0FFFFFF0) == 0x012FFF10 then
+		self:branch(getReg(self, op % 16), true)
+		return 3
+	end
+	if band(op, 0x0FBF0FFF) == 0x010F0000 then
+		putReg(self, (op // 0x1000) % 16, band(op, 0x400000) ~= 0 and self.spsr or self:cpsr())
+		return 1
+	end
+	if band(op, 0x0FB0FFF0) == 0x0120F000 then
+		writePSR(self, band(op, 0x400000) ~= 0, (op // 0x10000) % 16, getReg(self, op % 16))
+		return 1
+	end
+
 	local op1 = (op // 0x2000000) % 8
 	local nib = (op // 16) % 16
 	local kind = (op // 0x1000000) % 16
 
-	-- Multiply / long multiply: bits 27-24 = 0000, bits 7-4 = 1001
-	if op1 == 0 and nib == 9 and kind == 0 then
-		local mtype = (op // 0x200000) % 8
-		if mtype == 0 or mtype == 1 then
-			local rd = (op // 0x10000) % 16
-			local rn = (op // 0x1000) % 16
-			local rs = (op // 0x100) % 16
-			local rm = op % 16
-			local result = (getReg(self, rm) * getReg(self, rs)) % 0x100000000
-			if mtype == 1 then result = (result + getReg(self, rn)) % 0x100000000 end
-			putReg(self, rd, result)
-			if band(op, 0x100000) ~= 0 then setNZ(self, result) end
-			return 3
-		elseif mtype >= 2 and mtype <= 5 then
-			local rm = op % 16
-			local rs = (op // 0x100) % 16
-			local rdHi = (op // 0x10000) % 16
-			local rdLo = (op // 0x1000) % 16
-			local a, b = getReg(self, rm), getReg(self, rs)
-			local signed = mtype >= 4
-			local prod
-			if signed then
-				local sa = band(a, 0x80000000) ~= 0 and a - 0x100000000 or a
-				local sb = band(b, 0x80000000) ~= 0 and b - 0x100000000 or b
-				prod = sa * sb
-			else
-				prod = a * b
+	-- ARM multiply family; doubles cannot represent a full 64-bit product.
+	if band(op, 0x0FC000F0) == 0x00000090 or band(op, 0x0F8000F0) == 0x00800090 then
+		local a, b = getReg(self, op % 16), getReg(self, (op // 0x100) % 16)
+		local lowProduct = (a % 65536) * (b % 65536)
+		local cross = (a // 65536) * (b % 65536) + (a % 65536) * (b // 65536) + lowProduct // 65536
+		local lo = lowProduct % 65536 + (cross % 65536) * 65536
+		local hi = ((a // 65536) * (b // 65536) + cross // 65536) % 0x100000000
+		local long = band(op, 0x800000) ~= 0
+		local accumulate = band(op, 0x200000) ~= 0
+		local rd = (op // 0x10000) % 16
+		local rn = (op // 0x1000) % 16
+		if long then
+			if band(op, 0x400000) ~= 0 then
+				if a >= 0x80000000 then hi = (hi - b) % 0x100000000 end
+				if b >= 0x80000000 then hi = (hi - a) % 0x100000000 end
 			end
-			if mtype == 3 or mtype == 5 then prod += getReg(self, rdHi) * 0x100000000 + getReg(self, rdLo) end
-			local lo = prod % 0x100000000
-			local hi = math.floor(prod / 0x100000000) % 0x100000000
-			putReg(self, rdLo, lo)
-			putReg(self, rdHi, hi)
-			if band(op, 0x100000) ~= 0 then
-				setNZ(self, lo)
-				self.n = band(hi, 0x80000000) ~= 0
+			if accumulate then
+				local sum = lo + getReg(self, rn)
+				hi = (hi + getReg(self, rd) + sum // 0x100000000) % 0x100000000
+				lo = sum % 0x100000000
 			end
-			return 4
+			putReg(self, rn, lo)
+			putReg(self, rd, hi)
+		else
+			if accumulate then lo = (lo + getReg(self, rn)) % 0x100000000 end
+			putReg(self, rd, lo)
 		end
-		self:undefined()
-		return 3
+		if band(op, 0x100000) ~= 0 then
+			self.n = band(long and hi or lo, 0x80000000) ~= 0
+			self.z = lo == 0 and (not long or hi == 0)
+		end
+		return long and 4 or 3
 	end
 
 	-- Swap: bits 27-24 = 0001, bits 7-4 = 1001
@@ -502,8 +508,9 @@ function CPU:executeARM(op: number): number
 				if band(value, 0x80) ~= 0 then value = value - 0x100 end
 				value = value % 0x100000000
 			else
-				value = self:readHalf(effective)
-				if band(value, 0x8000) ~= 0 then value = value - 0x10000 end
+				value = effective % 2 == 1 and self:readByte(effective) or self:readHalf(effective)
+				local sign = effective % 2 == 1 and 0x80 or 0x8000
+				if band(value, sign) ~= 0 then value -= sign * 2 end
 				value = value % 0x100000000
 			end
 		else
@@ -545,13 +552,14 @@ function CPU:executeARM(op: number): number
 			local shiftType = (op // 0x20) % 4
 			if band(op, 0x10) ~= 0 then
 				local rs = (op // 0x100) % 16
-				operand2, shifterCarry = shiftOperand(self, getReg(self, rm), shiftType, 0, true, getReg(self, rs) % 256)
+				operand2, shifterCarry = shiftOperand(self, getReg(self, rm) + (rm == 15 and 4 or 0), shiftType, 0, true, getReg(self, rs) % 256)
 			else
 				operand2, shifterCarry = shiftOperand(self, getReg(self, rm), shiftType, (op // 0x80) % 32, false, 0)
 			end
 		end
 
-		local a = getReg(self, rn)
+		local a = getReg(self, rn) + (rn == 15 and op1 == 0 and band(op, 0x10) ~= 0 and 4 or 0)
+		local oldN, oldZ, oldC, oldV = self.n, self.z, self.c, self.v
 		local result
 		local writeBack = true
 		local isSub = false
@@ -579,6 +587,10 @@ function CPU:executeARM(op: number): number
 			setNZ(self, result)
 			if not (isSub or isAdd) then self.c = shifterCarry end
 		end
+		if not isTest and s == 0 then
+			self.n, self.z, self.c, self.v = oldN, oldZ, oldC, oldV
+		end
+		if isTest and rd == 15 and s == 1 then self:setCPSR(self.spsr) end
 		if writeBack then
 			if rd == 15 and s == 1 then
 				-- Data processing with Rd = PC and S = 1 is an exception return:
@@ -597,26 +609,6 @@ end
 
 function CPU:executeARM2(op: number, op1: number): number
 	local kind = (op // 0x1000000) % 16
-
-	-- PSR transfers: MRS / MSR (bits 27-24 = 0001, bits 7-4 = 0000)
-	if op1 == 0 and kind == 1 and nib == 0 then
-		local useSPSR = band(op, 0x400000) ~= 0
-		local rd = (op // 0x1000) % 16
-		local subOp = (op // 0x100000) % 4
-		if subOp == 0 then
-			putReg(self, rd, useSPSR and self.spsr or self:cpsr())
-		else
-			local fieldMask = (op // 0x10000) % 16
-			local value
-			if band(op, 0x2000000) ~= 0 then
-				value = ror(op % 0x100, ((op // 0x100) % 16) * 2)
-			else
-				value = getReg(self, op % 16)
-			end
-			writePSR(self, useSPSR, fieldMask, value)
-		end
-		return 1
-	end
 
 	-- Single data transfer (immediate or register offset)
 	if op1 == 2 or op1 == 3 then
@@ -648,7 +640,7 @@ function CPU:executeARM2(op: number, op1: number): number
 			end
 		else
 			if byte then self:writeByte(effective, getReg(self, rd) % 0x100)
-			else self:writeWord(effective, getReg(self, rd)) end
+			else self:writeWord(effective, getReg(self, rd) + (rd == 15 and 4 or 0)) end
 		end
 		if (not pre) or writeBack then putReg(self, rn, addr) end
 		if load then putReg(self, rd, value) end
@@ -665,36 +657,42 @@ function CPU:executeARM2(op: number, op1: number): number
 		local rn = (op // 0x10000) % 16
 		local list = op % 0x10000
 		local count = 0
-		for i = 0, 15 do
-			if band(list, lshift(1, i)) ~= 0 then count += 1 end
-		end
+		for i = 0, 15 do if band(list, lshift(1, i)) ~= 0 then count += 1 end end
+		if count == 0 then list = 0x8000; count = 16 end
 		local base = getReg(self, rn)
-		local start, wb
-		if up then
-			start = pre and (base + 4) or base
-			wb = base + 4 * count
-		else
-			start = pre and (base - 4 * count) or (base - 4 * count + 4)
-			wb = base - 4 * count
-		end
-		local addr = start
+		local wb = (base + (up and 4 or -4) * count) % 0x100000000
+		local addr = up and (base + (pre and 4 or 0)) or (base - 4 * count + (pre and 0 or 4))
+		local user = psr and (not load or band(list, 0x8000) == 0)
+		local first = true
+		-- LDM writeback occurs before the loads, so a loaded base wins.
+		if writeBack and load then putReg(self, rn, wb) end
 		for i = 0, 15 do
 			if band(list, lshift(1, i)) ~= 0 then
+				local bank = nil
+				local key = nil
+				if user and i >= 8 and i <= 12 and self.mode == MODE_FIQ then
+					bank, key = self.sharedLow, i - 7
+				elseif user and (i == 13 or i == 14) and self.mode ~= MODE_USER and self.mode ~= MODE_SYS then
+					bank, key = self.bank[MODE_USER], i == 13 and "r13" or "r14"
+				end
 				if load then
-					local v = self:readWord(addr)
+					local v = self:readWord(band(addr, 0xFFFFFFFC))
 					if i == 15 then
 						if psr then self:setCPSR(self.spsr) end
 						self:branch(v)
-					else
-						self.regs[i + 1] = v
-					end
+					elseif bank then bank[key] = v
+					else self.regs[i + 1] = v end
 				else
-					self:writeWord(addr, self.regs[i + 1])
+					local v = bank and bank[key] or getReg(self, i)
+					if i == 15 then v += 4 end
+					if i == rn and writeBack and not first then v = wb end
+					self:writeWord(addr, v)
 				end
+				first = false
 				addr += 4
 			end
 		end
-		if writeBack then putReg(self, rn, wb) end
+		if writeBack and not load then putReg(self, rn, wb) end
 		return 3 + count
 	end
 
@@ -722,11 +720,11 @@ function CPU:executeTHUMB(op: number): number
 	if top <= 0x1 then
 		if (op // 0x800) % 4 == 3 then
 			-- Format 2: add/subtract
-			local opc = (op // 0x40) % 16
+			local opc = (op // 0x200) % 4
 			local rs = (op // 8) % 8
 			local rd = op % 8
 			local operand
-			if opc < 2 then operand = self.regs[rs + 1] else operand = (op // 0x40) % 8 end
+			if opc < 2 then operand = self.regs[(op // 0x40) % 8 + 1] else operand = (op // 0x40) % 8 end
 			local a = self.regs[rs + 1]
 			local result
 			if opc == 0 or opc == 2 then result = addWithCarry(self, a, operand, 0)
@@ -798,7 +796,7 @@ function CPU:executeTHUMB(op: number): number
 		else
 			self.regs[rd + 1] = result
 			if shiftCarry ~= nil then self.c = shiftCarry end
-			if opc == 2 or opc == 3 or opc == 4 or opc == 7 then setNZ(self, result) end
+			setNZ(self, result)
 		end
 		return 1
 	end
@@ -817,7 +815,7 @@ function CPU:executeTHUMB(op: number): number
 		local a = getReg(self, rd)
 		local b = getReg(self, rs)
 		if opc == 0 then
-			putReg(self, rd, addWithCarry(self, a, b, 0))
+			putReg(self, rd, (a + b) % 0x100000000)
 		elseif opc == 1 then
 			subWithCarry(self, a, b, 1)
 		elseif opc == 2 then
@@ -853,8 +851,9 @@ function CPU:executeTHUMB(op: number): number
 		elseif opc == 5 then self.regs[rd + 1] = self:readHalf(addr)
 		elseif opc == 6 then self.regs[rd + 1] = self:readByte(addr)
 		else
-			local v = self:readHalf(addr)
-			if band(v, 0x8000) ~= 0 then v -= 0x10000 end
+			local v = addr % 2 == 1 and self:readByte(addr) or self:readHalf(addr)
+			local sign = addr % 2 == 1 and 0x80 or 0x8000
+			if band(v, sign) ~= 0 then v -= sign * 2 end
 			self.regs[rd + 1] = v % 0x100000000
 		end
 		return 3
@@ -968,17 +967,27 @@ function CPU:executeTHUMB(op: number): number
 		local load = band(op, 0x800) ~= 0
 		local rb = (op // 0x100) % 8
 		local list = op % 0x100
-		local addr = self.regs[rb + 1]
+		local base = self.regs[rb + 1]
+		local addr = base
 		local count = 0
+		if list == 0 then
+			if load then self:branch(self:readWord(band(addr, 0xFFFFFFFC)))
+			else self:writeWord(addr, self.regs[16] + 4) end
+			self.regs[rb + 1] = (base + 0x40) % 0x100000000
+			return 3
+		end
+		for i = 0, 7 do if band(list, lshift(1, i)) ~= 0 then count += 1 end end
+		local wb = (base + count * 4) % 0x100000000
+		local first = true
 		for i = 0, 7 do
 			if band(list, lshift(1, i)) ~= 0 then
-				if load then self.regs[i + 1] = self:readWord(addr)
-				else self:writeWord(addr, self.regs[i + 1]) end
+				if load then self.regs[i + 1] = self:readWord(band(addr, 0xFFFFFFFC))
+				else self:writeWord(addr, i == rb and not first and wb or self.regs[i + 1]) end
 				addr += 4
-				count += 1
+				first = false
 			end
 		end
-		if count > 0 then self.regs[rb + 1] = addr % 0x100000000 end
+		if not load or band(list, lshift(1, rb)) == 0 then self.regs[rb + 1] = wb end
 		return 3 + count
 	end
 
@@ -1019,7 +1028,7 @@ function CPU:executeTHUMB(op: number): number
 		local ret = (self.regs[16] + 1) % 0x100000000
 		local target = self.regs[15] + off * 2
 		self.regs[15] = ret
-		self.regs[16] = target % 0x10000000
+		self.regs[16] = band(target, self.thumb and 0xFFFFFFFE or 0xFFFFFFFC)
 		return 3
 	end
 

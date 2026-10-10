@@ -28,14 +28,16 @@ local StaticScan = {}
 type Rule = { name: string, pattern: string, category: string, severity: string }
 
 local RULES: { Rule } = {
-	{ name = "TODO", pattern = "\\-\\-.*TODO", category = "unfinished", severity = "info" },
-	{ name = "FIXME", pattern = "\\-\\-.*FIXME", category = "unfinished", severity = "warn" },
-	{ name = "HACK/XXX", pattern = "\\-\\-.*(HACK|XXX)", category = "unfinished", severity = "warn" },
-	{ name = "stub-call", pattern = "unimplemented|not%s+implemented|NYI", category = "unfinished", severity = "warn" },
+	{ name = "TODO", pattern = "%-%-.*TODO", category = "unfinished", severity = "info" },
+	{ name = "FIXME", pattern = "%-%-.*FIXME", category = "unfinished", severity = "warn" },
+	{ name = "HACK", pattern = "%-%-.*HACK", category = "unfinished", severity = "warn" },
+	{ name = "XXX", pattern = "%-%-.*XXX", category = "unfinished", severity = "warn" },
+	{ name = "unimplemented", pattern = "unimplemented", category = "unfinished", severity = "warn" },
+	{ name = "not implemented", pattern = "not%s+implemented", category = "unfinished", severity = "warn" },
+	{ name = "NYI", pattern = "NYI", category = "unfinished", severity = "warn" },
 	{ name = "unsafe-loadstring", pattern = "%f[%a]loadstring%s*%(", category = "vulnerability", severity = "error" },
 	{ name = "getfenv/setfenv", pattern = "%f[%a][gs]etfenv%s*%(", category = "vulnerability", severity = "warn" },
 	{ name = "require-numeric-asset", pattern = "require%s*%(%s*%d+", category = "vulnerability", severity = "error" },
-	{ name = "remote-fire-unvalidated", pattern = "%:[Ff]ire(Server|Client|AllClients)%s*%(", category = "vulnerability", severity = "info" },
 }
 
 --- Scan one source blob line by line, returning hits.

@@ -1,80 +1,40 @@
 --!nocheck
---[[ Tests/gba_suite.luau
-
- Runs the MIT-licensed jsmolka/gba-tests ROMs through the emulator headlessly.
-
- Each ROM executes its test battery at boot and then parks in an idle loop. On
- success it renders "All tests passed" and leaves IWRAM untouched. On failure it
- stores the failing test number as three decimal digits at 0x03000000, +4, +8.
-
- Run with:
-     python3 tools/prepare_tests.py
-     python3 tools/fetch_gba_tests.py
-     luau build/Tests/gba_suite.luau
- ]]
-
-local CREDIT = "Test ROMs: jsmolka/gba-tests, (c) 2019 Julian Smolka, MIT License"
-
+-- Completion addresses refer to the MIT jsmolka/gba-tests commit pinned by
+-- tools/fetch_gba_tests.py. Each is the unique ARM B-to-self after evaluation.
 local GBA = require("../Client/Emulator/GBA")
 local Base64 = require("../Shared/Base64")
-
 local ROMS = {
-	"arm_arm", "thumb_thumb", "memory_memory", "bios_bios",
-	"ppu_stripes", "ppu_hello", "ppu_shades",
-	"save_sram", "save_none", "save_flash64", "save_flash128",
-	"nes_nes", "unsafe_unsafe",
+ {"arm_arm", 0x08001EC4}, {"thumb_thumb", 0x08000AAC},
+ {"memory_memory", 0x080004C8}, {"save_sram", 0x08000470},
+ {"save_none", 0x080002A8}, {"save_flash64", 0x08000AC8},
+ {"save_flash128", 0x08000C4C},
+ -- These are visual smoke tests: completion proves boot, not pixel accuracy.
+ {"ppu_stripes", 0x08000140, true}, {"ppu_hello", 0x08000160, true},
+ {"ppu_shades", 0x0800015C, true},
 }
-
--- bios_bios asserts the exact contents of the real BIOS ROM at 0x00000000
--- (instruction words after reset, after a SWI, and during an IRQ). LuauGBA uses
--- high-level emulation and ships no BIOS image, so that ROM cannot pass by
--- design. It is reported separately rather than counted as a regression.
-local EXPECTED_UNSUPPORTED = { bios_bios = "needs a real BIOS image (HLE only)" }
-
-local FRAMES = 12
-local passed, failed, errored, skipped = 0, 0, 0, 0
-
-for _, name in ROMS do
-	local ok, chunks = pcall(require, "../roms/" .. name)
-	if not ok then
-		print(string.format("  %-16s SKIP (module missing)", name))
-		continue
-	end
-
-	local bytes = Base64.decodeToBuffer(table.concat(chunks))
-	local gba = GBA.new({ rom = bytes })
-
-	local okRun, err = pcall(function()
-		for _ = 1, FRAMES do gba:runFrame() end
-	end)
-
-	if not okRun then
-		errored += 1
-		print(string.format("  %-16s ERROR  %s", name, tostring(err)))
-		continue
-	end
-
-	-- Results live at 0x03000000 / +4 / +8. IWRAM is a 1-based array here.
-	local iw = gba.bus.iwram
-	local hundreds, tens, ones = iw[1] or 0, iw[5] or 0, iw[9] or 0
-	local pc = gba.cpu.regs[16]
-
-	if EXPECTED_UNSUPPORTED[name] then
-		skipped += 1
-		print(string.format("  %-16s N/A    %s", name, EXPECTED_UNSUPPORTED[name]))
-		continue
-	end
-
-	if hundreds == 0 and tens == 0 and ones == 0 then
-		passed += 1
-		print(string.format("  %-16s PASS   (pc=0x%08X)", name, pc))
-	else
-		failed += 1
-		local num = hundreds * 100 + tens * 10 + ones
-		print(string.format("  %-16s FAIL   first failing test = %d", name, num))
-	end
-
+local passed, failed = 0, 0
+for _, spec in ROMS do
+ local name, done, visual = unpack(spec)
+ local ok, err = pcall(function()
+  local bytes = Base64.decodeToBuffer(table.concat(require("../roms/" .. name)))
+  assert(buffer.readu32(bytes, done - 0x08000000) == 0xEAFFFFFE, "fixture completion marker mismatch")
+  local gba = GBA.new({rom = bytes})
+  local completed = false
+  for _ = 1, 60 do
+   gba:runFrame()
+   if not gba.cpu.thumb and gba.cpu.regs[16] == done then completed = true; break end
+  end
+  assert(completed, string.format("did not finish (pc=0x%08X)", gba.cpu.regs[16]))
+  if not visual then
+   -- m_test_eval preserves the result register; memory tests also use IWRAM.
+   local failure = gba.cpu.regs[name == "thumb_thumb" and 8 or 13]
+   assert(failure == 0, "first failing test = " .. failure)
+  end
+ end)
+ if ok then passed += 1; print(name .. (visual and " BOOT PASS" or " PASS"))
+ else failed += 1; print(name .. " FAIL: " .. tostring(err)) end
 end
-
-print(string.format("\n%d passed, %d failed, %d errored, %d not applicable", passed, failed, errored, skipped))
-print(CREDIT)
+print(string.format("%d passed, %d failed", passed, failed))
+print("BIOS suite requires a real BIOS; NES/unsafe demos have no conformance result protocol and are excluded.")
+print("Test ROMs: jsmolka/gba-tests, (c) 2019 Julian Smolka, MIT License")
+assert(failed == 0, string.format("%d conformance/boot checks failed", failed))

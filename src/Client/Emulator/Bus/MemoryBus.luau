@@ -65,7 +65,7 @@ function MemoryBus:read8(addr: number): number
 	elseif top == 0x03 then
 		return self.iwram[band(addr, Regions.IWRAM_MASK) + 1] or 0
 	elseif top == 0x04 then
-		return band(self:readIO16(band(addr, 0x3FE)), 0xFF)
+		return band(rshift(self:readIO16(band(addr, 0x3FE)), (addr % 2) * 8), 0xFF)
 	elseif top == 0x05 then
 		return self.pal[band(addr, Regions.PAL_MASK) + 1] or 0
 	elseif top == 0x06 then
@@ -113,8 +113,7 @@ function MemoryBus:read32(addr: number): number
 		return 0
 	end
 	if top == 0x04 then
-		-- Most IO registers are 16-bit; upper half reads as zero on the GBA.
-		return self:readIO16(band(addr, 0x3FE))
+		return self:readIO16(band(addr, 0x3FC)) + self:readIO16(band(addr + 2, 0x3FE)) * 0x10000
 	end
 	if top >= 0x0E then
 		local b = self.cart and self.cart.backend and self.cart.backend:read8(addr) or 0xFF
@@ -139,7 +138,9 @@ function MemoryBus:write8(addr: number, value: number)
 	elseif top == 0x03 then
 		self.iwram[band(addr, Regions.IWRAM_MASK) + 1] = value
 	elseif top == 0x04 then
+		if addr == 0x04000301 and self.cpu then self.cpu.halted = true; return end
 		local off = band(addr, 0x3FE)
+		if off == 0x202 then self:writeIO16(off, lshift(value, (addr % 2) * 8)); return end
 		local cur = self:readIO16(off)
 		if addr % 2 == 0 then
 			self:writeIO16(off, bor(band(cur, 0xFF00), value))
@@ -149,13 +150,15 @@ function MemoryBus:write8(addr: number, value: number)
 	elseif top == 0x05 then
 		-- 8-bit stores to palette are replicated across both lanes of the
 		-- addressed halfword.
-		local off = band(addr, Regions.PAL_MASK)
+		local off = band(addr, Regions.PAL_MASK, bnot(1))
 		self.pal[off + 1] = value
 		self.pal[bor(off, 1) + 1] = value
 	elseif top == 0x06 then
 		-- VRAM has no 8-bit write path: the byte is replicated across both
 		-- lanes of the addressed halfword, as hardware does.
 		local off = band(Regions.vramOffset(addr), bnot(1))
+		local mode = self.ppu and band(self.ppu.dispcnt, 7) or 0
+		if off >= (mode >= 3 and 0x14000 or 0x10000) then return end
 		self.vram[off + 1] = value
 		self.vram[off + 2] = value
 	elseif top == 0x07 then
@@ -185,6 +188,12 @@ function MemoryBus:write16(addr: number, value: number)
 		end
 		return
 	end
+	if top == 0x05 then
+		local off = band(addr, Regions.PAL_MASK)
+		self.pal[off + 1] = band(value, 0xFF)
+		self.pal[off + 2] = band(value // 0x100, 0xFF)
+		return
+	end
 	if top == 0x07 then
 		-- OAM rejects 8-bit writes but accepts 16-bit ones, so route the
 		-- halfword straight into the array rather than via write8.
@@ -211,7 +220,8 @@ function MemoryBus:write32(addr: number, value: number)
 	if top < 0x0E then addr = band(addr, bnot(3)) end
 	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
-		self:writeIO16(band(addr, 0x3FE), band(value, 0xFFFF))
+		self:writeIO16(band(addr, 0x3FC), band(value, 0xFFFF))
+		self:writeIO16(band(addr + 2, 0x3FE), rshift(value, 16))
 		return
 	end
 	if top >= 0x0E then

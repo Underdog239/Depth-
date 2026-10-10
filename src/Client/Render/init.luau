@@ -43,32 +43,27 @@ function Renderer.new(parent: Instance, options: any?)
 end
 
 function Renderer:_createBackend()
-	local ok, editable = pcall(function()
-		local AssetService = game:GetService("AssetService")
-		local img = AssetService:CreateEditableImage({ Size = Vector2.new(W, H) })
-		return img
-	end)
-	if ok and editable then
-		self.editableImage = editable
-		local label = Instance.new("ImageLabel")
+	local editable, label
+	local ok, err = pcall(function()
+		assert(Config.RENDER.mode ~= "grid", "grid selected")
+		editable = game:GetService("AssetService"):CreateEditableImage({ Size = Vector2.new(W, H) })
+		assert(editable, "EditableImage allocation unavailable")
+		label = Instance.new("ImageLabel")
 		label.Name = "GBASurface"
 		label.Size = UDim2.fromScale(1, 1)
 		label.BackgroundTransparency = 1
 		label.ResampleMode = Enum.ResamplerMode.Pixelated
-		local okContent, content = pcall(function()
-			return Content.fromObject(editable)
-		end)
-		if okContent then
-			label.Image = content
-		else
-			label.Image = ""
-		end
+		label.ImageContent = Content.fromObject(editable)
 		label.Parent = self.container
-		self.imageLabel = label
+	end)
+	if ok then
+		self.editableImage, self.imageLabel = editable, label
 		self.backend = "editableimage"
 		Logger.info("Renderer backend: EditableImage")
 		return
 	end
+	if label then label:Destroy() end
+	if editable then editable:Destroy() end
 
 	-- Fallback: coarse frame grid
 	self.backend = "grid"
@@ -81,8 +76,8 @@ function Renderer:_createBackend()
 		for gx = 0, self.gridCols - 1 do
 			local cell = Instance.new("Frame")
 			cell.BorderSizePixel = 0
-			cell.Size = UDim2.fromOffset(math.ceil(cellW), math.ceil(cellH))
-			cell.Position = UDim2.fromOffset(gx * cellW, gy * cellH)
+			cell.Size = UDim2.fromScale(1 / self.gridCols, 1 / self.gridRows)
+			cell.Position = UDim2.fromScale(gx / self.gridCols, gy / self.gridRows)
 			cell.Parent = self.container
 			self.cells[gy * self.gridCols + gx + 1] = cell
 		end
@@ -95,9 +90,7 @@ end
 -- so this is a single engine upload with no per-pixel Lua work.
 function Renderer:present(fb: buffer)
 	if self.backend == "editableimage" then
-		pcall(function()
-			self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
-		end)
+		self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
 	else
 		local cols, rows = self.gridCols, self.gridRows
 		for gy = 0, rows - 1 do
@@ -118,6 +111,7 @@ function Renderer:setScale(scale: number)
 end
 
 function Renderer:destroy()
+	if self.editableImage then self.editableImage:Destroy() end
 	self.container:Destroy()
 end
 

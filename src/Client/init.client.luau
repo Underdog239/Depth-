@@ -17,18 +17,20 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local DiagBridge = require(ReplicatedStorage.Shared.DiagBridge)
 
-local Diagnostics = require(script.Parent.Diagnostics)
-local GBA = require(script.Parent.Emulator.GBA)
-local ROMLoader = require(script.Parent.Emulator.ROMLoader)
-local SaveState = require(script.Parent.Emulator.Save.SaveState)
-local Renderer = require(script.Parent.Render)
-local InputManager = require(script.Parent.Input)
-local UI = require(script.Parent.UI)
-local Dashboard = require(script.Parent.UI.DiagDashboard)
-local AudioBridge = require(script.Parent.Audio)
-local Profiler = require(script.Parent.Optimize.Profiler)
-local Adaptive = require(script.Parent.Optimize.Adaptive)
-local Watchdog = require(script.Parent.Diagnostics.Watchdog)
+local Diagnostics = require(script.Diagnostics)
+local GBA = require(script.Emulator.GBA)
+local ROMLoader = require(script.Emulator.ROMLoader)
+local Base64 = require(ReplicatedStorage.Shared.Base64)
+local DemoROM = require(script.Emulator.DemoROM)
+local SaveState = require(script.Emulator.Save.SaveState)
+local Renderer = require(script.Render)
+local InputManager = require(script.Input)
+local UI = require(script.UI)
+local Dashboard = require(script.UI.DiagDashboard)
+local AudioBridge = require(script.Audio)
+local Profiler = require(script.Optimize.Profiler)
+local Adaptive = require(script.Optimize.Adaptive)
+local Watchdog = require(script.Diagnostics.Watchdog)
 
 -- 1. Background diagnostics ---------------------------------------------------
 Diagnostics.install()
@@ -45,6 +47,7 @@ local paused = false
 local frameIndex = 0
 local savedState = nil
 local lastSync = os.clock()
+local emulationDebt = 0
 
 local ui, renderer, input, dashboard
 
@@ -55,12 +58,16 @@ end
 local function loadRomBytes(bytes: { number })
 	local ok, info = pcall(function() return gba:loadROM(bytes) end)
 	if not ok then
+		ui:setStatus("ROM load failed: " .. tostring(info))
 		Diagnostics.report(`ROM load failed: {info}`, { source = "bootstrap.loadRom", kind = "runtime-error", severity = "error" })
 		return false
 	end
 	running = true
 	paused = false
-	ui:setStatus(describeRom(info, #bytes))
+	emulationDebt = 0
+	savedState = nil
+	ui:setRunning(true)
+	ui:setStatus(describeRom(info, gba.cart.size))
 	if not info.headerChecksumOk then
 		Diagnostics.report(`ROM header checksum mismatch for '{info.title}'`, { source = "GBA.loadROM", kind = "bug", severity = "warn" })
 	end
@@ -68,30 +75,55 @@ local function loadRomBytes(bytes: { number })
 end
 
 local hooks = {
+	onDemo = function() loadRomBytes(DemoROM.create()) end,
 	onLoadROM = function(bytes: { number })
 		loadRomBytes(bytes)
 	end,
 	onPlayPause = function()
+		if not running then return false end
 		paused = not paused
 		return not paused
 	end,
 	onReset = function()
+		if not gba.cart then return end
 		gba:reset()
-		ui:setStatus("reset")
+		running, paused = true, false
+		ui:setRunning(true)
+		ui:setStatus("Reset complete")
 	end,
 	onScale = function(scale: number)
 		renderer:setScale(scale)
 	end,
 	onSaveState = function()
+		if not gba.cart then ui:setStatus("Load a ROM first"); return end
 		savedState = SaveState.save(gba)
 		ui:setStatus("state saved (in memory)")
 	end,
 	onLoadState = function()
 		if savedState and SaveState.load(gba, savedState) then
-			ui:setStatus("state restored")
+			running = true
+			renderer:present(gba:framebuffer())
+			ui:setRunning(not paused)
+			ui:setStatus("State restored")
 		else
 			ui:setStatus("no saved state yet")
 		end
+	end,
+	onExportSave = function()
+		if not gba.cart then ui:setStatus("Load a ROM first"); return nil end
+		ui:setStatus("Copy the save text and keep it in a file to import next session")
+		return Base64.encode(gba:saveBytes())
+	end,
+	onImportSave = function(text)
+		if not gba.cart then ui:setStatus("Load a ROM first"); return end
+		local ok, bytes = pcall(Base64.decode, text)
+		if not ok or #bytes ~= gba.cart.backend.size then ui:setStatus("Save data is invalid or has the wrong size for this game"); return end
+		gba:loadSaveBytes(bytes)
+		gba:reset()
+		savedState = nil
+		running, paused = true, false
+		ui:setRunning(true)
+		ui:setStatus("Battery save imported; game restarted")
 	end,
 	onToggleDiag = function()
 		dashboard:toggle()
@@ -101,13 +133,14 @@ local hooks = {
 ui = UI.new(hooks)
 renderer = Renderer.new(ui.screenHost, { scale = Config.RENDER.scale })
 input = InputManager.new()
-dashboard = Dashboard.new(Diagnostics, ui.gui)
+dashboard = Dashboard.new(Diagnostics, ui.gui.Parent)
 
 -- 3. Embedded ROM auto-load ---------------------------------------------------
 task.spawn(function()
-	local bytes, source = ROMLoader.find()
+	local ok, bytes, source = pcall(ROMLoader.find)
+	if not ok then ui:setStatus("Embedded ROM failed: " .. tostring(bytes)); return end
 	if bytes then
-		Logger.info(`embedded ROM found via {source} ({#bytes // 1024} KiB)`)
+		Logger.info(`embedded ROM found via {source} ({buffer.len(bytes) // 1024} KiB)`)
 		loadRomBytes(bytes)
 	else
 		ui:setStatus(`{Config.VERSION} ready - no embedded ROM ({source}). Paste base64 or add Assets.ROM`)
@@ -139,31 +172,39 @@ Diagnostics.registerInvariant("ppu.line.inrange", function()
 end)
 Diagnostics.registerInvariant("save.size.valid", function()
 	local backend = gba.cart and gba.cart.backend
-	if not backend then return true end
+	if not backend or backend.type == "NONE" then return true end
 	return backend.size > 0 and #backend.data == backend.size, "save backend size mismatch"
 end)
 
 -- 6. Frame loop ---------------------------------------------------------------
-local function onFrame()
+local function onFrame(dt: number)
 	local frameStart = os.clock()
 	frameIndex += 1
 
 	input:pollStick()
 	if running and not paused then
+		emulationDebt = math.min(emulationDebt + dt, 2 / Config.FPS)
+	end
+	if running and not paused and emulationDebt >= 1 / Config.FPS then
 		gba:setKeys(input.mask)
 		watchdog:beginFrame(frameIndex)
 		profiler:beginSection("emulate")
-		local ok, err = pcall(function() gba:runFrame() end)
+		local ok, err = pcall(function() gba:runFrame(Config.CORE.clientSliceMs) end)
 		profiler:endSection("emulate")
 		watchdog:endFrame(frameIndex, gba.bus.cycles)
 		if not ok then
 			Diagnostics.report(`emulation error: {err}`, { source = "frameLoop", kind = "runtime-error", severity = "error", stack = debug.traceback() })
 			running = false
+			ui:setRunning(false)
+			ui:setStatus("Emulation stopped: " .. tostring(err))
 		end
 
 		audio:pump()
 
-		if adaptive:shouldPresent(frameIndex) then
+		if gba.ppu.frameComplete then
+			emulationDebt = math.max(0, emulationDebt - 1 / Config.FPS)
+		end
+		if gba.ppu.frameComplete and adaptive:shouldPresent(gba.ppu.frame) then
 			profiler:beginSection("present")
 			local okP, errP = pcall(function() renderer:present(gba:framebuffer()) end)
 			profiler:endSection("present")
@@ -173,8 +214,12 @@ local function onFrame()
 		end
 	end
 
-	local frameMs = (os.clock() - frameStart) * 1000
-	adaptive:sample(frameMs)
+	local frameMs = math.max(dt, os.clock() - frameStart) * 1000
+	if running and not paused then adaptive:sample(frameMs) end
+	if renderer.currentScale ~= adaptive.currentScale then
+		renderer:setScale(adaptive.currentScale)
+		ui:setScale(adaptive.currentScale)
+	end
 
 	-- periodic server sync of locally caught findings
 	local now = os.clock()
@@ -185,17 +230,19 @@ local function onFrame()
 		end)
 	end
 
-	if frameIndex % 30 == 0 and running then
+	if frameIndex % 30 == 0 and running and not paused then
 		local p = profiler:report()
 		local a = audio:stats()
-		ui:setStatus(string.format("fps~%.0f  emu %.1fms  present %.1fms  scale %d  %s  audio %.0f%%",
-			watchdog:fps(), p.emulate or 0, p.present or 0, adaptive.currentScale, adaptive.mode, a.level * 100))
+		ui:setMetrics(string.format("emu %.1fms | present %.1fms | %s | audio monitor %.0f%%",
+			p.emulate or 0, p.present or 0, renderer.backend, a.level * 100))
 	end
 end
 
-RunService.RenderStepped:Connect(function()
-	local ok, err = pcall(onFrame)
+RunService.RenderStepped:Connect(function(dt)
+	local ok, err = pcall(onFrame, dt)
 	if not ok then
+		running = false
+		ui:setStatus("Frame error: " .. tostring(err))
 		Diagnostics.report(`frame loop crashed: {err}`, { source = "RenderStepped", kind = "runtime-error", severity = "fatal" })
 	end
 end)

@@ -65,10 +65,9 @@ function Diag.capture(signal: {
 	local stored = Diag._store:add(finding)
 	Diag._dirty = true
 	Diag.onFinding:fire(stored)
-	-- escalate new fatal events loudly once
-	if stored.count == 1 and (stored.severity == "fatal" or stored.severity == "error") then
-		Logger.error(`DIAG[{stored.category}] {stored.message}`)
-	end
+	-- The originating error is already logged. Logging findings back into the
+	-- observed Logger/LogService creates recursive findings.
+
 	return stored
 end
 
@@ -166,7 +165,7 @@ local function runScan()
 	Diag._scanRuns += 1
 
 	-- (a) static analysis of our own live scripts
-	local root = script.Parent.Parent -- src/Client
+	local root = script.Parent -- GBAClient
 	local ok, hits = pcall(StaticScan.scanInstance, root)
 	if ok and hits then
 		for _, f in StaticScan.toFindings(hits) do

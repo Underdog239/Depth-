@@ -216,7 +216,7 @@ do
 		rom[off + 4] = (value // 0x1000000) % 256
 	end
 	w32(0x00, 0xEA00002E) -- B 0xC0 (entry point branches past the header)
-	local code = { 0xE59F0020, 0xE59F1020, 0xE5801000, 0xE59F201C, 0xE59F301C, 0xE59F401C, 0xE1E230B2, 0xE2544001, 0x1AFFFFFC, 0xEAFFFFFE }
+	local code = { 0xE59F0020, 0xE59F1020, 0xE5801000, 0xE59F201C, 0xE59F301C, 0xE59F401C, 0xE0C230B2, 0xE2544001, 0x1AFFFFFC, 0xEAFFFFFE }
 	for i, word in code do w32(0xC0 + (i - 1) * 4, word) end
 	local color15 = 3 + 25 * 0x20 + 11 * 0x400 -- rgb(30,200,90) quantised to 15-bit
 	local pool = { 0x04000000, 0x00000403, 0x06000000, color15, 240 * 160 }
@@ -270,35 +270,23 @@ do
 	check("flash id mode", flash:read8(base) == 0x62, flash:read8(base))
 	flash:write8(base, 0xF0)
 
-	-- EEPROM: serial write then serial read round trip
-	local ee = SaveBackend.new("EEPROM", 0x80000) -- 512 B, 6 address bits
-	local function pushBits(bits) for _, b in bits do ee:eepromWriteHalf(b) end end
-	local function addrBits(a, n)
-		local out = {}
-		for i = n - 1, 0, -1 do table.insert(out, a // 2 ^ i % 2) end
-		return out
+	-- EEPROM uses 64-bit blocks, a trailing stop bit, and four read dummy bits.
+	local ee = SaveBackend.new("EEPROM", 0x80000)
+	ee:beginEEPROM(73)
+	local request = {1, 0, 0, 0, 0, 0, 1, 1} -- write block 3
+	for byte = 1, 8 do
+		for bit = 7, 0, -1 do table.insert(request, bit32.band(bit32.rshift(0x50 + byte, bit), 1)) end
 	end
-	local function byteBits(v)
-		local out = {}
-		for i = 7, 0, -1 do table.insert(out, v // 2 ^ i % 2) end
-		return out
-	end
-	-- write 0x5A to address 3: [0][cmd 10][addr][data]
-	local frame = { 0, 1, 0 }
-	for _, b in addrBits(3, 6) do table.insert(frame, b) end
-	for _, b in byteBits(0x5A) do table.insert(frame, b) end
-	pushBits(frame)
-	check("eeprom stored byte", ee.data[4] == 0x5A, ee.data[4])
-	-- read it back: [0][cmd 11][addr] then 9 halfwords per byte
-	local rframe = { 0, 1, 1 }
-	for _, b in addrBits(3, 6) do table.insert(rframe, b) end
-	pushBits(rframe)
+	table.insert(request, 0)
+	for _, bit in request do ee:eepromWriteHalf(bit) end
+	check("eeprom writes full block", ee.data[25] == 0x51 and ee.data[32] == 0x58)
+	ee:beginEEPROM(9)
+	for _, bit in {1, 1, 0, 0, 0, 0, 1, 1, 0} do ee:eepromWriteHalf(bit) end
+	for _ = 1, 4 do ee:eepromReadHalf() end
 	local got = 0
-	for i = 1, 9 do
-		local bit = ee:eepromReadHalf()
-		if i > 1 then got = got * 2 + bit end
-	end
-	check("eeprom read round trip", got == 0x5A, got)
+	for _ = 1, 8 do got = got * 2 + ee:eepromReadHalf() end
+	check("eeprom read round trip", got == 0x51, got)
+
 end
 
 -- Audio APU -------------------------------------------------------------------
@@ -331,7 +319,7 @@ do
 	-- DMA sound FIFO A
 	apu:write16(0x0A0, 0x8040)
 	apu:write16(0x082, 0x0300)
-	apu:tick(2000)
+	apu:timerOverflow(0, 2)
 	check("fifo A drains", #apu.fifoA < 2, #apu.fifoA)
 end
 

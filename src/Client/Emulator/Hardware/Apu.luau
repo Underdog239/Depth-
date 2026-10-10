@@ -4,13 +4,11 @@
  GBA sound hardware: two square channels, a wave channel, a noise channel and
  the two DMA sound FIFOs, plus the master mixer (SOUNDCNT_L/H/X, SOUNDBIAS).
 
- Registers behave correctly so titles that poll them work; the mixer produces
+ The mixer produces
  signed 8-bit samples into a ring buffer that any sink can consume.
 
- Roblox exposes no PCM playback API, so the default configuration models and
- exposes audio rather than playing it. A sink can be attached
- (Config.AUDIO.mode = "synth") to forward samples wherever a project can accept
- them; see docs/AUDIO.md.
+ This build exposes samples for inspection without audible Roblox playback.
+ Sound accuracy remains experimental; see docs/AUDIO.md.
  ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -44,7 +42,7 @@ function Apu.new(interrupts: any?)
 		interrupts = interrupts,
 		regs = table.create(0x50, 0),
 		waveRam = table.create(16, 0),
-		fifoA = {}, fifoB = {},
+		fifoA = {}, fifoB = {}, fifoSampleA = 0, fifoSampleB = 0, frameAcc = 0, frameStep = 0,
 		ch = { newChannel(), newChannel(), newChannel(), newChannel() },
 		sampleAcc = 0,
 		cyclesPerSample = Config.CPU_HZ / math.max(Config.AUDIO.sampleRate, 1),
@@ -64,8 +62,8 @@ function Apu:read16(off: number): number
 	if off >= 0x090 and off <= 0x09F then
 		return self.waveRam[(off - 0x090) // 2 + 1] or 0
 	end
-	if off >= 0x0A0 and off <= 0x0A7 then return 0 end -- FIFO A write-only
-	if off >= 0x0A8 and off <= 0x0AF then return 0 end -- FIFO B write-only
+	if off >= 0x0A0 and off <= 0x0A3 then return 0 end -- FIFO A write-only
+	if off >= 0x0A4 and off <= 0x0A7 then return 0 end -- FIFO B write-only
 	local idx = (off - 0x060) // 2 + 1
 	return self.regs[idx] or 0
 end
@@ -77,12 +75,14 @@ function Apu:write16(off: number, value: number)
 		self.waveRam[(off - 0x090) // 2 + 1] = value
 		return
 	end
-	if off >= 0x0A0 and off <= 0x0A7 then
+	if off >= 0x0A0 and off <= 0x0A3 then
+		if #self.fifoA >= 32 then return end
 		table.insert(self.fifoA, bit32.band(value, 0xFF))
 		table.insert(self.fifoA, value // 0x100)
 		return
 	end
-	if off >= 0x0A8 and off <= 0x0AF then
+	if off >= 0x0A4 and off <= 0x0A7 then
+		if #self.fifoB >= 32 then return end
 		table.insert(self.fifoB, bit32.band(value, 0xFF))
 		table.insert(self.fifoB, value // 0x100)
 		return
@@ -93,6 +93,10 @@ function Apu:write16(off: number, value: number)
 end
 
 function Apu:_applyRegister(off: number, value: number)
+	if off == 0x082 then
+		if bit32.band(value, 0x0800) ~= 0 then table.clear(self.fifoA); self.fifoSampleA = 0 end
+		if bit32.band(value, 0x8000) ~= 0 then table.clear(self.fifoB); self.fifoSampleB = 0 end
+	end
 	if off == 0x084 then
 		self.masterEnable = bit32.band(value, 0x80) ~= 0
 		if not self.masterEnable then
@@ -149,33 +153,39 @@ function Apu:_trigger(i: number, value: number, _envReg: number)
 		ch.waveVol = bit32.band(cnt // 0x2000, 3)
 	end
 	if i == 4 then
-		local cnt = regValue(self, 0x078)
+		local cnt = value
 		ch.divisor = bit32.band(cnt, 7)
 		ch.width7 = bit32.band(cnt, 8) ~= 0
-		ch.prescaler = bit32.band(cnt // 0x8, 7)
+		ch.prescaler = bit32.band(cnt // 0x10, 0xF)
 		ch.lfsr = 0x7FFF
 	end
 	-- length load
 	local lenReg = (i == 1) and 0x062 or (i == 2 and 0x068 or (i == 3 and 0x072 or 0x078))
-	local lenBits = bit32.band(regValue(self, lenReg), 0x3F)
-	ch.length = 64 - lenBits
+	local lenBits = bit32.band(regValue(self, lenReg), i == 3 and 0xFF or 0x3F)
+	ch.length = (i == 3 and 256 or 64) - lenBits
 end
 
 function Apu:_period(i: number): number
 	local ch = self.ch[i]
 	local base = 2048 - ch.freq
-	if i == 3 then return base * 2 end
+	if i == 3 then return base * 8 end
 	if i == 4 then
 		local r = ch.divisor == 0 and 8 or ch.divisor * 16
-		return r * (ch.prescaler + 1)
+		return r * 2 ^ ch.prescaler * 4
 	end
-	return base * 4
+	return base * 16
 end
 
 -- Clocking ------------------------------------------------------------------
 
 function Apu:tick(cycles: number)
 	if not self.masterEnable then return end
+	self.frameAcc += cycles
+	while self.frameAcc >= 32768 do
+		self.frameAcc -= 32768
+		self.frameStep = (self.frameStep + 1) % 8
+		self:_tickEnvelopes()
+	end
 	for i = 1, 4 do self:_tickChannel(i, cycles) end
 	self.sampleAcc += cycles
 	local cps = self.cyclesPerSample
@@ -183,7 +193,7 @@ function Apu:tick(cycles: number)
 	while self.sampleAcc >= cps and guard < 512 do
 		self.sampleAcc -= cps
 		guard += 1
-		self:_mixSample()
+		if Config.AUDIO.enabled and Config.AUDIO.mode ~= "off" then self:_mixSample() end
 	end
 	if guard >= 512 then self.sampleAcc = 0 end
 end
@@ -201,16 +211,17 @@ function Apu:_tickChannel(i: number, cycles: number)
 			ch.out = DUTY[ch.duty + 1][ch.dutyPos + 1] == 1 and ch.envVol or 0
 		elseif i == 3 then
 			ch.wavePos = (ch.wavePos + 1) % 32
-			local byte = self.waveRam[ch.wavePos // 2 + 1] or 0
+			local word = self.waveRam[ch.wavePos // 4 + 1] or 0
+			local byte = bit32.band(bit32.rshift(word, (ch.wavePos // 2 % 2) * 8), 0xFF)
 			local nib = (ch.wavePos % 2 == 0) and (byte // 0x10) or bit32.band(byte, 0xF)
 			local shift = (ch.waveVol == 0) and 4 or (ch.waveVol == 1 and 0 or (ch.waveVol == 2 and 1 or 2))
 			ch.out = ch.waveVol == 0 and 0 or (nib // 2 ^ shift)
 		else
 			local bit = bit32.band(ch.lfsr, 1)
-			local newBit = bit32.bxor(bit, bit32.band(ch.lfsr // 1, 1))
+			local newBit = bit32.bxor(bit, bit32.band(ch.lfsr // 2, 1))
 			ch.lfsr = bit32.bor(bit32.rshift(ch.lfsr, 1), bit32.lshift(newBit, 14))
 			if ch.width7 then
-				ch.lfsr = bit32.bor(bit32.band(ch.lfsr, 0x3FFF), bit32.lshift(newBit, 6))
+				ch.lfsr = bit32.bor(bit32.band(ch.lfsr, bit32.bnot(0x40)), bit32.lshift(newBit, 6))
 			end
 			ch.out = (bit32.band(ch.lfsr, 1) == 0) and ch.envVol or 0
 		end
@@ -224,7 +235,7 @@ function Apu:_tickEnvelopes()
 	for i = 1, 4 do
 		local ch = self.ch[i]
 		if not ch.enabled then continue end
-		if i ~= 3 then
+		if i ~= 3 and self.frameStep == 7 then
 			if ch.envPeriod > 0 then
 				ch.envTimer -= 1
 				if ch.envTimer <= 0 then
@@ -234,7 +245,7 @@ function Apu:_tickEnvelopes()
 				end
 			end
 		end
-		if ch.lengthEnable and ch.length > 0 then
+		if self.frameStep % 2 == 0 and ch.lengthEnable and ch.length > 0 then
 			ch.length -= 1
 			if ch.length == 0 then ch.enabled = false end
 		end
@@ -244,11 +255,6 @@ end
 -- Mixing --------------------------------------------------------------------
 
 function Apu:_mixSample()
-	self._envCounter = (self._envCounter or 0) + 1
-	if self._envCounter >= 512 then
-		self._envCounter = 0
-		self:_tickEnvelopes()
-	end
 
 	local cntL = regValue(self, 0x080)
 	local volL = bit32.band(cntL, 7)
@@ -265,15 +271,8 @@ function Apu:_mixSample()
 	end
 	-- DMA sound FIFOs
 	local cntH = regValue(self, 0x082)
-	local fifoVol = bit32.band(cntH // 0x4, 3)
-	if bit32.band(cntH, 0x300) ~= 0 and #self.fifoA > 0 then
-		sum += (table.remove(self.fifoA, 1) - 128) // 16
-		channels += 1
-	end
-	if bit32.band(cntH, 0xC00) ~= 0 and #self.fifoB > 0 then
-		sum += (table.remove(self.fifoB, 1) - 128) // 16
-		channels += 1
-	end
+	if bit32.band(cntH, 0x300) ~= 0 then sum += self.fifoSampleA / 16; channels += 1 end
+	if bit32.band(cntH, 0x3000) ~= 0 then sum += self.fifoSampleB / 16; channels += 1 end
 
 	local volume = math.max(volL, volR) / 7
 	local sample = 0
@@ -285,6 +284,23 @@ function Apu:_mixSample()
 	table.insert(self.buffer, sample)
 	self.samplesProduced += 1
 	if #self.buffer > self.bufferLimit then table.remove(self.buffer, 1) end
+end
+
+-- Direct sound advances on the selected hardware timer, independently of
+-- the host sample rate. DMA1/2 refill a FIFO in four-word bursts.
+function Apu:timerOverflow(index: number, count: number)
+	if not self.masterEnable then return end
+	local control = regValue(self, 0x082)
+	for _, spec in { {"fifoA", "fifoSampleA", 0x400, 0x040000A0}, {"fifoB", "fifoSampleB", 0x4000, 0x040000A4} } do
+		local timer = bit32.band(control, spec[3]) ~= 0 and 1 or 0
+		if index ~= timer then continue end
+		for _ = 1, count do
+			local fifo = self[spec[1]]
+			local byte = table.remove(fifo, 1)
+			if byte then self[spec[2]] = byte >= 128 and byte - 256 or byte end
+			if #fifo <= 16 and self.dma then self.dma:requestFIFO(spec[4]) end
+		end
+	end
 end
 
 --- Drain up to `n` samples (default: all).
@@ -318,6 +334,9 @@ function Apu:reset()
 	for i = 1, 4 do self.ch[i] = newChannel() end
 	self.masterEnable = false
 	self.sampleAcc = 0
+	self.frameAcc, self.frameStep = 0, 0
+	self.fifoSampleA, self.fifoSampleB = 0, 0
+	self.samplesProduced = 0
 end
 
 return Apu

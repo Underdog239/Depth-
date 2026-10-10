@@ -66,8 +66,8 @@ function InputManager:recompute()
 	local s = self._stick
 	if s.x > dz then mask = bit32.bor(mask, 0x10) end
 	if s.x < -dz then mask = bit32.bor(mask, 0x20) end
-	if s.y > dz then mask = bit32.bor(mask, 0x80) end
-	if s.y < -dz then mask = bit32.bor(mask, 0x40) end
+	if s.y > dz then mask = bit32.bor(mask, 0x40) end
+	if s.y < -dz then mask = bit32.bor(mask, 0x80) end
 	self.mask = mask
 	self.onKeyChanged:fire(mask)
 end

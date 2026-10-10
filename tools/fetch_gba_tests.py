@@ -37,12 +37,13 @@ CREDIT = (
 
 
 def ensure_clone():
-    if os.path.isdir(os.path.join(SRC, ".git")):
-        return
-    os.makedirs(os.path.dirname(SRC), exist_ok=True)
-    subprocess.check_call(
-        ["gh", "repo", "clone", "jsmolka/gba-tests", SRC, "--", "--depth", "1"]
-    )
+    if not os.path.isdir(os.path.join(SRC, ".git")):
+        os.makedirs(os.path.dirname(SRC), exist_ok=True)
+        subprocess.check_call(["git", "clone", UPSTREAM + ".git", SRC])
+    actual = subprocess.check_output(["git", "-C", SRC, "rev-parse", "HEAD"], text=True).strip()
+    if actual != PINNED_COMMIT:
+        subprocess.check_call(["git", "-C", SRC, "fetch", "origin", PINNED_COMMIT])
+        subprocess.check_call(["git", "-C", SRC, "checkout", "--detach", PINNED_COMMIT])
 
 
 def write_notice():

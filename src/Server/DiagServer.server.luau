@@ -1,101 +1,84 @@
 --!strict
---[[ Server/DiagServer.server.luau
-
- Server half of the diagnostics persistence. It owns the DataStore so findings
- survive rejoins ("check what it caught without running anything"), and exposes
- them to clients through a single RemoteFunction.
-
- Security note: this file is written the way the catcher itself demands -
-   * no client input is trusted (type + length + rate validated)
-   * writes are rate limited per player
-   * nothing is written on behalf of a client except its own findings
-   * no loadstring / getfenv anywhere
- ]]
-
+-- Findings are isolated by player. Requests update a bounded cache; persistence
+-- is coalesced so every client push does not consume a DataStore write.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
-
 local Config = require(ReplicatedStorage.Shared.Config)
-local Logger = require(ReplicatedStorage.Shared.Logger)
-
-local STORE_KEY = "session"
-local MAX_ENTRIES = Config.DIAG.maxEvents
-local MAX_MESSAGE_LEN = 512
-
-local store = nil
-pcall(function()
-	store = DataStoreService:GetDataStore(Config.DIAG.dataStoreName)
-end)
-
-local findings: { any } = {}
-local function load()
-	if not store then return end
-	local ok, data = pcall(function() return store:GetAsync(STORE_KEY) end)
-	if ok and type(data) == "table" then findings = data end
+local Payload = require(ReplicatedStorage.Shared.DiagPayload)
+local store
+if Config.DIAG.persist then
+	pcall(function() store = game:GetService("DataStoreService"):GetDataStore(Config.DIAG.dataStoreName) end)
 end
-
-local function save()
-	if not store then return end
-	pcall(function() store:SetAsync(STORE_KEY, findings) end)
-end
-
-local function validFinding(f: any): boolean
-	if type(f) ~= "table" then return false end
-	if type(f.message) ~= "string" or #f.message > MAX_MESSAGE_LEN then return false end
-	if type(f.symbol) ~= "string" or #f.symbol > MAX_MESSAGE_LEN then return false end
-	local okCategory = f.category == "error" or f.category == "bug"
-		or f.category == "vulnerability" or f.category == "unfinished"
-	return okCategory
-end
-
-local function merge(list: { any })
-	for _, f in list do
-		if validFinding(f) then
-			findings[#findings + 1] = f
-		end
+local sessions = {}
+local function session(player)
+	local id = player.UserId
+	if sessions[id] then return sessions[id] end
+	local data = {}
+	if store then
+		local ok, value = pcall(function() return store:GetAsync("player:" .. id) end)
+		if ok and type(value) == "table" then data = Payload.merge({}, value, Config.DIAG.maxEvents) end
 	end
-	while #findings > MAX_ENTRIES do table.remove(findings, 1) end
+	-- Another request may have completed while GetAsync yielded.
+	if not sessions[id] then sessions[id] = {findings = data, dirty = false, revision = 0} end
+	return sessions[id]
 end
-
-load()
-
--- Remotes --------------------------------------------------------------------
-
+local function save(id, state)
+	if not store or not state.dirty or state.saving then return end
+	state.saving = true
+	local revision, snapshot = state.revision, state.findings
+	local ok = pcall(function()
+		store:UpdateAsync("player:" .. id, function(old)
+			return Payload.merge(type(old) == "table" and old or {}, snapshot, Config.DIAG.maxEvents)
+		end)
+	end)
+	state.saving = false
+	if ok and state.revision == revision then state.dirty = false end
+end
 local remotes = Instance.new("Folder")
 remotes.Name = "GBADiagRemotes"
 remotes.Parent = ReplicatedStorage
-
 local push = Instance.new("RemoteFunction")
 push.Name = "PushFindings"
 push.Parent = remotes
-
 local get = Instance.new("RemoteFunction")
 get.Name = "GetFindings"
 get.Parent = remotes
-
--- Rate limiting: 1 push every 5s per player.
-local lastPush: { [Player]: number } = {}
-
-push.OnServerInvoke = function(player: Player, payload: any): boolean
+local lastPush, lastGet = {}, {}
+push.OnServerInvoke = function(player, payload)
 	local now = os.clock()
-	if lastPush[player] and now - lastPush[player] < 5 then
-		return false
-	end
+	if lastPush[player] and now - lastPush[player] < 5 then return false end
 	lastPush[player] = now
-	if type(payload) ~= "table" then return false end
-	if #payload > 100 then return false end
-	merge(payload)
-	save()
+	if type(payload) ~= "table" or #payload > Config.DIAG.maxEvents then return false end
+	local state = session(player)
+	state.findings = Payload.merge(state.findings, payload, Config.DIAG.maxEvents)
+	state.dirty = true
+	state.revision += 1
 	return true
 end
-
-get.OnServerInvoke = function(_player: Player): { any }
-	return findings
+get.OnServerInvoke = function(player)
+	local now = os.clock()
+	if lastGet[player] and now - lastGet[player] < 5 then return {} end
+	lastGet[player] = now
+	return session(player).findings
 end
-
-Players.PlayerRemoving:Connect(function(player)
-	lastPush[player] = nil
+task.spawn(function()
+	while true do
+		task.wait(30)
+		for id, state in sessions do task.spawn(save, id, state) end
+	end
 end)
-
-Logger.info(`DIAG server persistence online ({#findings} findings restored)`)
+Players.PlayerRemoving:Connect(function(player)
+	local state = sessions[player.UserId]
+	if state then save(player.UserId, state) end
+	sessions[player.UserId] = nil
+	lastPush[player], lastGet[player] = nil, nil
+end)
+game:BindToClose(function()
+	local remaining = 0
+	for id, state in sessions do
+		remaining += 1
+		task.spawn(function() save(id, state); remaining -= 1 end)
+	end
+	local deadline = os.clock() + 25
+	while remaining > 0 and os.clock() < deadline do task.wait(0.1) end
+end)

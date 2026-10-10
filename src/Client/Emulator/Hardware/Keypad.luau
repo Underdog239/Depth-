@@ -55,9 +55,9 @@ function Keypad:_maybeIrq()
 	local logic = bit32.band(self.keycnt, 0x8000) ~= 0
 	local pressed = self.held
 	if logic then
-		if bit32.band(pressed, keys) ~= 0 then self.interrupts:raise(Interrupts.KEYPAD) end
+		if keys ~= 0 and bit32.band(pressed, keys) == keys then self.interrupts:raise(Interrupts.KEYPAD) end
 	else
-		if bit32.band(bit32.bnot(pressed), keys) ~= 0 then self.interrupts:raise(Interrupts.KEYPAD) end
+		if bit32.band(pressed, keys) ~= 0 then self.interrupts:raise(Interrupts.KEYPAD) end
 	end
 end
 

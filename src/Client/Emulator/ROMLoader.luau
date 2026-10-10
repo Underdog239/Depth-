@@ -17,6 +17,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Base64 = require(ReplicatedStorage.Shared.Base64)
+local Util = require(ReplicatedStorage.Shared.Util)
 
 local ROMLoader = {}
 
@@ -29,10 +30,12 @@ local function fromModule(inst: Instance): ({ number }?, string?)
 	if not ok or type(data) ~= "table" or #data == 0 then return nil, nil end
 	local first = data[1]
 	if type(first) == "string" then
-		local bytes = Base64.decode(table.concat(data))
+		assert(#table.concat(data) <= math.ceil(MAX_ROM / 3) * 4, "Embedded ROM exceeds 32 MiB")
+		local bytes = Base64.decodeToBuffer(table.concat(data))
 		return bytes, "Assets.ROM (base64 chunks)"
 	elseif type(first) == "number" then
-		return data, "Assets.ROM (byte table)"
+		assert(#data <= MAX_ROM, "Embedded ROM exceeds 32 MiB")
+		return Util.bytesToBuffer(data), "Assets.ROM (byte table)"
 	end
 	return nil, nil
 end
@@ -48,6 +51,7 @@ local function fromFolder(folder: Instance): ({ number }?, string?)
 	table.sort(parts, function(a, b) return a[1] < b[1] end)
 	local joined = table.create(#parts)
 	for i, p in parts do joined[i] = p[2] end
+	assert(#table.concat(joined) <= math.ceil(MAX_ROM / 3) * 4, "Embedded ROM exceeds 32 MiB")
 	return Base64.decodeToBuffer(table.concat(joined)), "GBAROM (chunk folder)"
 end
 
@@ -59,7 +63,7 @@ function ROMLoader.find(): ({ number }?, string?)
 		if mod and mod:IsA("ModuleScript") then
 			local bytes, name = fromModule(mod)
 			if bytes then
-				if #bytes > MAX_ROM then return nil, "embedded ROM exceeds 32 MiB" end
+				if buffer.len(bytes) > MAX_ROM then return nil, "embedded ROM exceeds 32 MiB" end
 				return bytes, name
 			end
 		end
@@ -69,12 +73,13 @@ function ROMLoader.find(): ({ number }?, string?)
 	if holder then
 		local bytes, name
 		if holder:IsA("StringValue") then
+			assert(#holder.Value <= math.ceil(MAX_ROM / 3) * 4, "Embedded ROM exceeds 32 MiB")
 			bytes, name = Base64.decodeToBuffer(holder.Value), "GBAROM (StringValue)"
 		elseif holder:IsA("Folder") then
 			bytes, name = fromFolder(holder)
 		end
-		if bytes and #bytes > 0 then
-			if #bytes > MAX_ROM then return nil, "embedded ROM exceeds 32 MiB" end
+		if bytes and buffer.len(bytes) > 0 then
+			if buffer.len(bytes) > MAX_ROM then return nil, "embedded ROM exceeds 32 MiB" end
 			return bytes, name
 		end
 	end

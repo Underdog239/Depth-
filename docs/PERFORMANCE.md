@@ -1,5 +1,15 @@
 # Performance
 
+## Testing build
+
+The Roblox client uses `Config.CORE.clientSliceMs` (12 ms by default) to
+return between portions of an emulated frame. Completed frames alone are
+presented. This bounds ordinary interpreter work per callback; it does not
+guarantee full emulation speed. Headless `runFrame()` still runs a whole frame.
+The figures below are historical measurements from earlier commits, not
+measurements of this testing build or of Roblox client performance.
+
+
 ## The budget
 
 | quantity | value |
@@ -32,7 +42,7 @@ oscillates:
 
 1. **native** - present every produced frame;
 2. **catchup** - emulate every frame but present every other one;
-3. **auto-scale** - drop the render scale (fewer pixels to upload).
+3. **auto-scale** - drop the displayed size (the native upload remains 240×160).
 
 ## Profiler (`Optimize/Profiler.luau`)
 
@@ -42,9 +52,10 @@ or upload-bound (present high).
 
 ## Tuning checklist
 
-* If `emulate` dominates: lower `Config.CORE.maxCyclesPerFrame` (slow-motion
-  instead of dropped frames), or enable `useBlockCache`.
-* If `present` dominates: lower `Config.RENDER.scale` or switch to `adaptive`.
+* If `emulate` dominates: adjust `Config.CORE.clientSliceMs` to balance responsiveness
+  and emulation throughput. No decoded-instruction cache is implemented.
+* If `present` dominates: measure the EditableImage/grid backend costs. Scaling changes displayed size,
+  not the number of native pixels uploaded.
 * If both are fine but FPS is low: you are likely limited by Roblox's own frame
   pacing - check with the profiler before changing anything.
 

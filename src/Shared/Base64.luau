@@ -43,7 +43,14 @@ end
 -- Groups are written as a single 32-bit store where there is room, which is
 -- three times fewer stores than a byte-at-a-time loop.
 function Base64.decodeToBuffer(text: string): buffer
+	text = text:gsub("%s", "")
 	local n = #text
+	assert(n % 4 == 0, "Invalid base64 length")
+	assert(not text:find("[^%w+/=]"), "Invalid base64 character")
+	local firstPadding = text:find("=", 1, true)
+	if firstPadding then
+		assert(firstPadding >= n - 1 and text:sub(firstPadding):match("^=+$"), "Invalid base64 padding")
+	end
 	local padding = 0
 	if n >= 1 and string.byte(text, n) == 61 then padding += 1 end
 	if n >= 2 and string.byte(text, n - 1) == 61 then padding += 1 end
@@ -58,7 +65,7 @@ function Base64.decodeToBuffer(text: string): buffer
 		local c2 = DECODE[string.byte(text, i + 1)]
 		local c3 = DECODE[string.byte(text, i + 2)]
 		local c4 = DECODE[string.byte(text, i + 3)]
-		if c1 == nil or c2 == nil then break end
+		assert(c1 ~= nil and c2 ~= nil, "Invalid base64 group")
 		local b0 = c1 * 4 + c2 // 16
 		local b1 = 0
 		local b2 = 0

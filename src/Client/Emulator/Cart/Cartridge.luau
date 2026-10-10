@@ -88,7 +88,7 @@ function Cartridge.parseHeader(rom: buffer): any
 	end
 
 	local entry = u8(0) + u8(1) * 0x100 + u8(2) * 0x10000 + u8(3) * 0x1000000
-	local checksum = 0
+	local checksum = -0x19
 	for i = 0xA0, 0xBC do
 		checksum = (checksum - u8(i)) % 256
 	end
@@ -105,7 +105,7 @@ function Cartridge.parseHeader(rom: buffer): any
 		headerChecksum = hdrChecksum,
 		headerChecksumOk = checksum == hdrChecksum,
 		firmwareFlag = u8(0xB2),
-		romSizeBytes = 0x8000 * (2 ^ sizeIndex),
+		romSizeBytes = len,
 		sizeIndex = sizeIndex,
 		saveType = detectSaveType(rom, gameCode),
 	}
@@ -119,6 +119,7 @@ function Cartridge.new(romBytes: any): Cartridge
 	else
 		rom = Util.bytesToBuffer(romBytes)
 	end
+	assert(buffer.len(rom) >= 0xC0 and buffer.len(rom) <= 32 * 1024 * 1024, "ROM must be between 192 bytes and 32 MiB")
 	local info = Cartridge.parseHeader(rom)
 	return setmetatable({
 		rom = rom,

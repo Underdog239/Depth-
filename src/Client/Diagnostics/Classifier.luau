@@ -34,12 +34,12 @@ local Classifier = {}
 -- Patterns are checked in priority order; first match wins per category.
 
 local VULN_PATTERNS = {
-	{ "RemoteEvent without server validation", "%f[%a]RemoteEvent%f[%A]" },
-	{ "FireServer/FireAllClients of untrusted data", "Fire(Server|AllClients)" },
+	{ "RemoteEvent without server validation", "%f[%a]remoteevent%f[%A]" },
+	{ "FireServer/FireAllClients of untrusted data", "fireserver|fireallclients" },
 	{ "loadstring / dynamic code execution", "%f[%a]loadstring%f[%A]" },
 	{ "getfenv/setfenv usage", "[gs]etfenv" },
-	{ "HttpService on the client", "HttpService" },
-	{ "DataStore write from client", "DataStoreService" },
+	{ "HttpService on the client", "httpservice" },
+	{ "DataStore write from client", "datastoreservice" },
 	{ "require of untrusted user asset", "require%(%s*%d+" },
 	{ "unbounded loop over network data", "while%s+true" },
 	{ "string as bytecode / obfuscation marker", "\\%d\\%d\\%d\\%d" },
@@ -67,7 +67,11 @@ local BUG_PATTERNS = {
 
 local function containsAny(hay: string, patterns: { { string } }): string?
 	for _, entry in patterns do
-		if string.find(hay, entry[2]) then
+		local matched = false
+		for alternative in string.gmatch(entry[2], "[^|]+") do
+			if string.find(hay, alternative) then matched = true; break end
+		end
+		if matched then
 			return entry[1]
 		end
 	end

@@ -65,9 +65,10 @@ Scanline based. For each visible line it:
 ### Cartridge + HLE BIOS
 
 `Cartridge` parses the real header (title at 0xA0, code at 0xAC, checksum at
-0xBD, size at 0xBE) and detects the save type. `HLEBIOS` reimplements the BIOS
-SWIs (Div, Sqrt, CpuSet, LZ77/RL, Halt, VBlankIntrWait, ...) so commercial ROMs
-boot without a copyrighted BIOS image.
+0xBD) and detects the save type from ROM signatures. ROM size comes from the
+payload. `HLEBIOS` reimplements selected SWIs (Div, Sqrt, CpuSet, LZ77/RL, Halt, VBlankIntrWait).
+Unsupported calls raise an explicit error. The original IRQ trampoline calls
+the game handler at IWRAM 0x7FFC; no Nintendo BIOS is bundled.
 
 ## Determinism
 

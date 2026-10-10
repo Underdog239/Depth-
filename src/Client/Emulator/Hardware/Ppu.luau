@@ -52,9 +52,9 @@ function Ppu:read16(addr: number): number
 	if addr == 0x002 then return self.dispcnt // 0x10000 end
 	if addr == 0x004 then
 		local stat = band(self.dispstat, 0xFFF8)
-		if self.line >= 160 and self.line < 228 then stat = bor(stat, 1) end
-		if self.line < 160 and self.dot >= 1006 then stat = bor(stat, 2) end
-		if self.line == band(self.dispstat, 0xFF) then stat = bor(stat, 4) end
+		if self.line >= 160 and self.line < 227 then stat = bor(stat, 1) end
+		if self.dot >= 1006 then stat = bor(stat, 2) end
+		if self.line == band(self.dispstat // 0x100, 0xFF) then stat = bor(stat, 4) end
 		return stat
 	end
 	if addr == 0x006 then return self.line end
@@ -74,17 +74,19 @@ function Ppu:read16(addr: number): number
 		if addr == 0x03E then return band(self.bgy[2] // 0x10000, 0xFFFF) end
 	end
 	if addr >= 0x020 and addr <= 0x03F then
-		local i = (addr - 0x020) // 8 + 1
+		local i = (addr - 0x020) // 16 + 1
 		local reg = (addr - 0x020) % 8
 		if reg == 0 then return band(self.bgpa[i], 0xFFFF) end
 		if reg == 2 then return band(self.bgpb[i], 0xFFFF) end
 		if reg == 4 then return band(self.bgpc[i], 0xFFFF) end
 		if reg == 6 then return band(self.bgpd[i], 0xFFFF) end
 	end
-	if addr >= 0x040 and addr <= 0x04B then
-		local i = (addr - 0x040) // 4 + 1
-		return (addr % 4 == 0) and self.winh[i] or self.winv[i]
+	if addr >= 0x040 and addr <= 0x046 then
+		local i = ((addr - 0x040) % 4) // 2 + 1
+		return addr < 0x044 and self.winh[i] or self.winv[i]
 	end
+	if addr == 0x048 then return self.winin end
+	if addr == 0x04A then return self.winout end
 	if addr == 0x04C then return self.mosaic end
 	if addr == 0x050 then return self.bldcnt end
 	if addr == 0x052 then return self.bldalpha end
@@ -107,42 +109,42 @@ function Ppu:write16(addr: number, value: number)
 	elseif addr == 0x028 then
 		self.bgx[1] = bor(band(self.bgx[1], 0xFFFF0000), value)
 	elseif addr == 0x02A then
-		local hi = band(value, 0xFFFF) * 0x10000
+		local hi = band(value, 0xFFF) * 0x10000
 		local v = bor(band(self.bgx[1], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgx[1] = v
 	elseif addr == 0x02C then
 		self.bgy[1] = bor(band(self.bgy[1], 0xFFFF0000), value)
 	elseif addr == 0x02E then
-		local hi = band(value, 0xFFFF) * 0x10000
+		local hi = band(value, 0xFFF) * 0x10000
 		local v = bor(band(self.bgy[1], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgy[1] = v
 	elseif addr == 0x038 then
 		self.bgx[2] = bor(band(self.bgx[2], 0xFFFF0000), value)
 	elseif addr == 0x03A then
-		local hi = band(value, 0xFFFF) * 0x10000
+		local hi = band(value, 0xFFF) * 0x10000
 		local v = bor(band(self.bgx[2], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgx[2] = v
 	elseif addr == 0x03C then
 		self.bgy[2] = bor(band(self.bgy[2], 0xFFFF0000), value)
 	elseif addr == 0x03E then
-		local hi = band(value, 0xFFFF) * 0x10000
+		local hi = band(value, 0xFFF) * 0x10000
 		local v = bor(band(self.bgy[2], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgy[2] = v
 	elseif addr >= 0x020 and addr <= 0x03F then
-		local i = (addr - 0x020) // 8 + 1
+		local i = (addr - 0x020) // 16 + 1
 		local reg = (addr - 0x020) % 8
 		local s = value >= 0x8000 and value - 0x10000 or value
 		if reg == 0 then self.bgpa[i] = s
 		elseif reg == 2 then self.bgpb[i] = s
 		elseif reg == 4 then self.bgpc[i] = s
 		elseif reg == 6 then self.bgpd[i] = s end
-	elseif addr >= 0x040 and addr <= 0x04B then
-		local i = (addr - 0x040) // 4 + 1
-		if addr % 4 == 0 then self.winh[i] = value else self.winv[i] = value end
+	elseif addr >= 0x040 and addr <= 0x046 then
+		local i = ((addr - 0x040) % 4) // 2 + 1
+		if addr < 0x044 then self.winh[i] = value else self.winv[i] = value end
 	elseif addr == 0x048 then self.winin = value
 	elseif addr == 0x04A then self.winout = value
 	elseif addr == 0x04C then self.mosaic = value
@@ -153,41 +155,39 @@ function Ppu:write16(addr: number, value: number)
 end
 
 function Ppu:reset()
-	self.dispcnt = 0; self.dispstat = 0; self.line = 0; self.dot = 0; self.frameComplete = false
+	local fresh = Ppu.new(self.bus, self.interrupts)
+	for k, v in fresh do self[k] = v end
 end
 
--- Timing --------------------------------------------------------------------
-
+-- Render at HBlank entry, then advance scanline timing. HBlank IRQs also occur
+-- in VBlank; HBlank DMA runs only on visible lines.
 function Ppu:tick(cycles: number)
-	self.dot += cycles
-	while self.dot >= CYCLES_PER_LINE do
-		self.dot -= CYCLES_PER_LINE
-		self:_endLine()
+	while cycles > 0 do
+		local boundary = self.dot < 1006 and 1006 or CYCLES_PER_LINE
+		local step = math.min(cycles, boundary - self.dot)
+		self.dot += step
+		cycles -= step
+		if self.dot == 1006 then
+			if self.line < H then
+				self:_renderScanline(self.line)
+				self:_blitLine(self.line)
+				if self.dma then self.dma:trigger(2) end
+			end
+			if band(self.dispstat, 0x10) ~= 0 then self.interrupts:raise(Interrupts.HBLANK) end
+		elseif self.dot == CYCLES_PER_LINE then
+			self.dot = 0
+			self.line = (self.line + 1) % LINES_TOTAL
+			if self.line == H then
+				if band(self.dispstat, 8) ~= 0 then self.interrupts:raise(Interrupts.VBLANK) end
+				if self.dma then self.dma:trigger(1) end
+				self.frame += 1
+				self.frameComplete = true
+			end
+			if self.line == band(self.dispstat // 0x100, 0xFF) and band(self.dispstat, 0x20) ~= 0 then
+				self.interrupts:raise(Interrupts.VCOUNT)
+			end
+		end
 	end
-end
-
-function Ppu:_endLine()
-	local line = self.line
-	if line < H then
-		self:_renderScanline(line)
-		self:_blitLine(line)
-	end
-	local stat = self.dispstat
-	if line < H then
-		if band(stat, 0x10) ~= 0 then self.interrupts:raise(Interrupts.HBLANK) end
-		if self.dma then self.dma:trigger(2) end
-	end
-	if band(stat, 0xFF) == line and band(stat, 0x20) ~= 0 then
-		self.interrupts:raise(Interrupts.VCOUNT)
-	end
-	self.line += 1
-	if self.line == 160 then
-		if band(stat, 0x08) ~= 0 then self.interrupts:raise(Interrupts.VBLANK) end
-		if self.dma then self.dma:trigger(1) end
-		self.frame += 1
-		self.frameComplete = true
-	end
-	if self.line >= LINES_TOTAL then self.line = 0 end
 end
 
 -- Backing stores ------------------------------------------------------------

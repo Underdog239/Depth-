@@ -5,7 +5,7 @@
 
 local Config = {}
 
-Config.VERSION = "1.0.0"
+Config.VERSION = "0.2.0-testing"
 
 -- Emulation clock targets ---------------------------------------------------
 -- GBA: 16.777216 MHz CPU, 59.7275 Hz display, 280896 cycles per frame.
@@ -30,6 +30,8 @@ Config.RENDER = {
 
 -- Core loop -----------------------------------------------------------------
 Config.CORE = {
+	-- Yield the client frame after this budget; headless tests run whole frames.
+	clientSliceMs = 12,
 	-- Hard ceiling on emulated instructions per rendered frame. Prevents a
 	-- runaway frame from freezing the Roblox client (watchdog guards too).
 	maxCyclesPerFrame = Config.CYCLES_PER_FRAME * 2,
@@ -41,28 +43,13 @@ Config.CORE = {
 	traceInstructions = false,
 }
 
--- Audio ---------------------------------------------------------------------
--- Roblox exposes no PCM playback API, so the APU is modelled fully and its
--- samples are exposed through a sink. See docs/AUDIO.md for the wall and the
--- optional synth adapter that can drive Roblox Sound objects per channel.
+-- Audio monitoring generates samples for inspection. Audible playback is not
+-- implemented in this testing build.
 Config.AUDIO = {
 	enabled = true,
-	-- APU mixing rate in Hz. The GBA's sound clock is 2^24/(soundbias); 32768
-	-- is a good trade-off between fidelity and Lua cost.
 	sampleRate = 32768,
-	-- "off"      : model only (registers correct, no output)
-	-- "monitor"  : compute and expose samples, no playback
-	-- "synth"    : additionally drive the Roblox synth adapter (if available)
-	mode = "monitor" :: "off" | "monitor" | "synth",
+	mode = "monitor" :: "off" | "monitor",
 	master = 0.6,
-}
-
--- Saves ---------------------------------------------------------------------
-Config.SAVE = {
-	-- Seconds between automatic battery-save flushes to the persistence backend.
-	autosaveInterval = 20,
-	-- SRAM/Flash/EEPROM sizes (bytes) used when the header is ambiguous.
-	defaultSize = 0x8000,
 }
 
 -- Diagnostics ---------------------------------------------------------------

@@ -49,13 +49,14 @@ function UI.new(hooks: any, parent: Instance?)
 	screenHost.BackgroundColor3 = Color3.new(0, 0, 0)
 	screenHost.BorderSizePixel = 0
 	screenHost.Size = UDim2.fromOffset(Config.SCREEN_W * Config.RENDER.scale, Config.SCREEN_H * Config.RENDER.scale)
-	screenHost.Position = UDim2.new(0.5, -(Config.SCREEN_W * Config.RENDER.scale) // 2, 0.5, -(Config.SCREEN_H * Config.RENDER.scale) // 2)
+	screenHost.AnchorPoint = Vector2.new(0.5, 0.5)
+	screenHost.Position = UDim2.new(0.5, 140, 0.5, 0)
 	screenHost.Parent = gui
 	self.screenHost = screenHost
 
 	-- Control panel
 	local panel = Instance.new("Frame")
-	panel.Size = UDim2.fromOffset(300, 150)
+	panel.Size = UDim2.fromOffset(320, 352)
 	panel.Position = UDim2.new(0, 8, 0, 8)
 	panel.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 	panel.BackgroundTransparency = 0.1
@@ -86,6 +87,7 @@ function UI.new(hooks: any, parent: Instance?)
 	box.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
 	box.BorderSizePixel = 0
 	box.ClearTextOnFocus = false
+	box.Text = ""
 	box.Size = UDim2.new(1, -12, 0, 26)
 	box.Position = UDim2.fromOffset(6, 46)
 	box.Parent = panel
@@ -100,16 +102,17 @@ function UI.new(hooks: any, parent: Instance?)
 			self:setStatus("ROM box is empty - paste base64 data first")
 			return
 		end
-		local ok, bytes = pcall(Base64.decode, text)
-		if ok and bytes and #bytes > 0 then
-			self:setStatus(string.format("decoded %d bytes, loading...", #bytes))
+		if #text > 200000 then self:setStatus("Use an embedded ROM module for larger files"); return end
+		local ok, bytes = pcall(Base64.decodeToBuffer, text)
+		if ok and bytes and buffer.len(bytes) >= 0xC0 then
+			self:setStatus(string.format("decoded %d bytes, loading...", buffer.len(bytes)))
 			self.hooks.onLoadROM(bytes)
 		else
 			self:setStatus("failed to decode base64 ROM data")
 		end
 	end)
 
-	local playBtn = button("Pause", panel)
+	local playBtn = button("Play", panel)
 	playBtn.Size = UDim2.fromOffset(70, 24)
 	playBtn.Position = UDim2.fromOffset(102, 78)
 	self.playBtn = playBtn
@@ -138,11 +141,78 @@ function UI.new(hooks: any, parent: Instance?)
 	loadStateBtn.Position = UDim2.fromOffset(198, 108)
 	loadStateBtn.MouseButton1Click:Connect(function() self.hooks.onLoadState() end)
 
+	local demo = button("Run demo", panel)
+	demo.Size = UDim2.fromOffset(100, 24)
+	demo.Position = UDim2.fromOffset(6, 138)
+	demo.MouseButton1Click:Connect(function() self.hooks.onDemo() end)
+
+	local saveBox = Instance.new("TextBox")
+	saveBox.Text = ""
+	saveBox.PlaceholderText = "Battery save data: paste to import, or export and copy"
+	saveBox.ClearTextOnFocus = false
+	saveBox.MultiLine = true
+	saveBox.TextWrapped = true
+	saveBox.TextSize = 12
+	saveBox.Font = Enum.Font.Code
+	saveBox.TextColor3 = Color3.new(1, 1, 1)
+	saveBox.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+	saveBox.Size = UDim2.new(1, -12, 0, 48)
+	saveBox.Position = UDim2.fromOffset(6, 170)
+	saveBox.Parent = panel
+	local export = button("Export save", panel)
+	export.Size = UDim2.fromOffset(110, 24)
+	export.Position = UDim2.fromOffset(6, 226)
+	export.MouseButton1Click:Connect(function()
+		local text = self.hooks.onExportSave()
+		if text then
+			saveBox.Text = text
+			saveBox:CaptureFocus()
+			saveBox.CursorPosition = #text + 1
+			saveBox.SelectionStart = 1
+		end
+	end)
+	local import = button("Import save", panel)
+	import.Size = UDim2.fromOffset(110, 24)
+	import.Position = UDim2.fromOffset(122, 226)
+	import.MouseButton1Click:Connect(function()
+		if #saveBox.Text > 180000 then self:setStatus("Save text is too large"); return end
+		self.hooks.onImportSave(saveBox.Text)
+	end)
+
+	local help = Instance.new("TextLabel")
+	help.BackgroundTransparency = 1
+	help.TextColor3 = Color3.fromRGB(200, 210, 225)
+	help.Font = Enum.Font.Code
+	help.TextSize = 12
+	help.TextWrapped = true
+	help.Text = "Z/X: A/B · arrows: move · Enter: Start\nA/C: L/R · RightShift: Select\nDemo: hold a button to change colour. Audio is silent."
+	help.Size = UDim2.new(1, -12, 0, 54)
+	help.Position = UDim2.fromOffset(6, 256)
+	help.Parent = panel
+	local metrics = help:Clone()
+	metrics.Text = "Ready for a ROM or the built-in demo"
+	metrics.Size = UDim2.new(1, -12, 0, 36)
+	metrics.Position = UDim2.fromOffset(6, 312)
+	metrics.Parent = panel
+	self.metrics = metrics
+
 	return self
 end
 
 function UI:setStatus(text: string)
 	self.status.Text = text
+end
+
+function UI:setRunning(running: boolean)
+	self.playBtn.Text = running and "Pause" or "Play"
+end
+
+function UI:setMetrics(text: string)
+	self.metrics.Text = text
+end
+
+function UI:setScale(scale: number)
+	self.screenHost.Size = UDim2.fromOffset(Config.SCREEN_W * scale, Config.SCREEN_H * scale)
 end
 
 function UI:destroy()

@@ -49,6 +49,9 @@ function GBA.new(options: any)
 	self.ppu.dma = self.dma
 
 	self.cpu = Arm7tdmi.new(self.bus)
+	self.bus.cpu = self.cpu
+	self.apu.dma = self.dma
+	self.timers.onOverflow = function(index, count) self.apu:timerOverflow(index, count) end
 	self.cart = nil
 	self.frames = 0
 	self.pendingCycles = 0
@@ -77,6 +80,11 @@ function GBA:loadROM(bytes: { number })
 end
 
 function GBA:reset()
+	if self.cart then self.cart.backend:reset() end
+	for _, name in { "ewram", "iwram", "pal", "vram", "oam", "io" } do
+		for i = 1, #self.bus[name] do self.bus[name][i] = 0 end
+	end
+	self.bus.cycles, self.bus.stallCycles, self.bus.openBus = 0, 0, 0
 	self.interrupts:reset()
 	self.timers:reset()
 	self.dma:reset()
@@ -85,7 +93,8 @@ function GBA:reset()
 	self.apu:reset()
 	-- Hardware always begins execution at the ROM base; the 4 bytes at ROM
 	-- offset 0 are the entry-point branch instruction itself.
-	self.cpu:reset(0x08000000)
+	self.cpu:reset(self.bus.hleBios and 0x08000000 or 0)
+	if self.bus.hleBios then self.cpu:setCPSR(0x1F) end
 	self.frames = 0
 	self.pendingCycles = 0
 end
@@ -94,7 +103,7 @@ function GBA:setKeys(mask: number)
 	self.keypad:setMask(mask)
 end
 
-function GBA:framebuffer(): { number }
+function GBA:framebuffer(): buffer
 	return self.ppu.framebuffer
 end
 
@@ -117,6 +126,11 @@ function GBA:stepInstruction()
 	if self.cpu.halted then
 		local pending = bit32.band(self.interrupts.ie, self.interrupts.if_)
 		if pending ~= 0 then
+			if self.cpu._intrWaitFlags and bit32.band(pending, self.cpu._intrWaitFlags) == 0 then
+				self.bus:tick(4)
+				return
+			end
+			self.cpu._intrWaitFlags = nil
 			self.cpu.halted = false
 		else
 			self.bus:tick(4)
@@ -148,10 +162,11 @@ function GBA:cycles(): number
 end
 
 --- Run until the PPU completes one frame (or the safety budget is exhausted).
-function GBA:runFrame(): number
+function GBA:runFrame(maxMilliseconds: number?): number
 	self.ppu.frameComplete = false
 	local guard = 0
 	local maxIterations = Config.CORE.maxCyclesPerFrame
+	local deadline = maxMilliseconds and os.clock() + maxMilliseconds / 1000 or nil
 
 	-- Optional fixed-budget mode: ignore VBlank pacing and run a set number of
 	-- cycles. Used for benchmarking and for titles that need a speed nudge.
@@ -161,6 +176,7 @@ function GBA:runFrame(): number
 		while self:cycles() - start < target and guard < maxIterations do
 			self:stepInstruction()
 			guard += 1
+			if deadline and guard % 256 == 0 and os.clock() >= deadline then break end
 		end
 		self:flushCycles()
 		self.frames += 1
@@ -170,6 +186,7 @@ function GBA:runFrame(): number
 	while not self.ppu.frameComplete do
 		self:stepInstruction()
 		guard += 1
+		if deadline and guard % 256 == 0 and os.clock() >= deadline then break end
 		if guard >= maxIterations then
 			if self.diag then
 				self.diag.report("frame budget exhausted before VBlank", {
@@ -181,7 +198,7 @@ function GBA:runFrame(): number
 		end
 	end
 	self:flushCycles()
-	self.frames += 1
+	if self.ppu.frameComplete then self.frames += 1 end
 	return self.ppu.frame
 end
 

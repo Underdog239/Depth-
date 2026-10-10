@@ -40,10 +40,12 @@ function Hooks.install(sink: HookSink)
 	-- 1) Uncaught server errors
 	local sc = safeService("ScriptContext")
 	if sc then
-		local conn = (sc :: any).Error:Connect(function(message: string, stack: string)
-			sink({ message = message, stack = stack, source = "ScriptContext.Error", kind = "runtime-error" })
+		local ok, conn = pcall(function()
+			return (sc :: any).Error:Connect(function(message: string, stack: string)
+				sink({ message = message, stack = stack, source = "ScriptContext.Error", kind = "runtime-error" })
+			end)
 		end)
-		table.insert(Hooks._connections, conn)
+		if ok and conn then table.insert(Hooks._connections, conn) end
 	end
 
 	-- 2) LogService mirror catches warn()/error() text everywhere it is exposed
@@ -51,6 +53,8 @@ function Hooks.install(sink: HookSink)
 	if ls and (ls :: any).MessageOut then
 		local okConn, conn = pcall(function()
 			return (ls :: any).MessageOut:Connect(function(message: string, messageType: Enum.MessageType)
+				if message:sub(1, 5) == "[GBA/" then return end
+				if messageType ~= Enum.MessageType.MessageError and messageType ~= Enum.MessageType.MessageWarning then return end
 				local kind = "log"
 				if messageType == Enum.MessageType.MessageError then kind = "runtime-error"
 				elseif messageType == Enum.MessageType.MessageWarning then kind = "warn" end

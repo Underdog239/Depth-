@@ -22,7 +22,7 @@ def build(color15):
     code.append(0xE59F201C)  # LDR r2,[pc,#0x1C]  -> 0x06000000 VRAM
     code.append(0xE59F301C)  # LDR r3,[pc,#0x1C]  -> colour
     code.append(0xE59F401C)  # LDR r4,[pc,#0x1C]  -> 240*160 pixels
-    code.append(0xE1E230B2)  # loop: STRH r3,[r2,#2]!
+    code.append(0xE0C230B2)  # loop: STRH r3,[r2],#2
     code.append(0xE2544001)  # SUBS r4,r4,#1
     code.append(0x1AFFFFFC)  # BNE loop
     code.append(0xEAFFFFFE)  # B .
@@ -45,7 +45,7 @@ def build(color15):
     blob[0xB3] = 0x00
     blob[0xBC] = 0x00
     blob[0xBE] = 0x00
-    chk = 0
+    chk = -0x19
     for i in range(0xA0, 0xBD):
         chk = (chk - blob[i]) & 0xFF
     blob[0xBD] = chk

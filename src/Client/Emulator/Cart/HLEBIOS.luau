@@ -18,7 +18,15 @@ local HLEBIOS = {}
 HLEBIOS.__index = HLEBIOS
 
 function HLEBIOS.new(bus: any)
-	return setmetatable({ bus = bus, cpu = nil }, HLEBIOS) :: any
+	-- Original IRQ trampoline: preserve caller registers, call the handler at
+	-- IWRAM 0x7FFC, then restore CPSR and return from IRQ.
+	local words = { [0x18] = 0xEA000038, [0x100] = 0xE92D500F,
+		[0x104] = 0xE3A00301, [0x108] = 0xE1A0E00F, [0x10C] = 0xE510F004,
+		[0x110] = 0xE8BD500F, [0x114] = 0xE25EF004 }
+	for addr, word in words do
+		for i = 0, 3 do bus.bios[addr + i + 1] = bit32.band(bit32.rshift(word, i * 8), 0xFF) end
+	end
+	return setmetatable({ bus = bus }, HLEBIOS) :: any
 end
 
 -- Helpers -------------------------------------------------------------------
@@ -56,14 +64,14 @@ end
 
 local function arcTan(cpu)
 	local v = signed(cpu.regs[1])
-	local a = math.atan(v / 65536)
+	local a = math.atan(v / 16384)
 	cpu.regs[1] = math.floor(a / (math.pi / 2) * 16384 + 0.5) % 0x10000
 end
 
 local function arcTan2(cpu)
 	local x = signed(cpu.regs[1])
 	local y = signed(cpu.regs[2])
-	local a = math.atan(y, x)
+	local a = math.atan2(y, x)
 	cpu.regs[1] = math.floor(a / (2 * math.pi) * 65536 + 0.5) % 0x10000
 end
 
@@ -72,7 +80,11 @@ local function cpuSet(cpu, fast: boolean)
 	local dst = cpu.regs[2]
 	local ctrl = cpu.regs[3]
 	local count = bit32.band(ctrl, 0x1FFFFF)
-	local word = bit32.band(ctrl, 0x4000000) ~= 0
+	local word = fast or bit32.band(ctrl, 0x4000000) ~= 0
+	if fast then count = math.ceil(count / 8) * 8 end
+	assert(count <= 0x40000, "BIOS copy exceeds supported transfer size")
+	src = bit32.band(src, word and 0xFFFFFFFC or 0xFFFFFFFE)
+	dst = bit32.band(dst, word and 0xFFFFFFFC or 0xFFFFFFFE)
 	local fill = bit32.band(ctrl, 0x1000000) ~= 0
 	local bus = cpu.bus
 	if word then
@@ -90,55 +102,44 @@ local function cpuSet(cpu, fast: boolean)
 	end
 end
 
-local function lz77(cpu, vram: boolean)
-	local src = cpu.regs[1]
-	local dst = cpu.regs[2]
-	local bus = cpu.bus
+-- Decode to a byte array so VRAM output uses halfword stores and overlapping
+-- backreferences always see the bytes already produced.
+local function decompress(cpu, vram: boolean, runLength: boolean)
+	local bus, src, dst = cpu.bus, cpu.regs[1], cpu.regs[2]
 	local header = bus:read32(src)
+	local size = bit32.rshift(header, 8)
+	assert(size <= 0x40000, "BIOS decompression exceeds 256 KiB")
+	local out = table.create(size)
 	src += 4
-	local size = bit32.band(header, 0xFFFFFF)
-	local out = 0
-	while out < size do
-		local flags = bus:read8(src)
-		src += 1
-		for bit = 0, 7 do
-			if out >= size then break end
-			if bit32.band(flags, bit32.lshift(1, bit)) == 0 then
-				bus:write8(dst + out, bus:read8(src)); src += 1; out += 1
-			else
-				local b1 = bus:read8(src)
-				local b2 = bus:read8(src + 1)
-				src += 2
-				local length = (b1 // 16) + 3
-				local disp = ((b1 % 16) * 256 + b2) + 1
-				for _ = 1, length do
-					if out >= size then break end
-					bus:write8(dst + out, bus:read8(dst + out - disp))
-					out += 1
+	while #out < size do
+		local flag = bus:read8(src); src += 1
+		if runLength then
+			local repeatRun = bit32.band(flag, 0x80) ~= 0
+			local count = bit32.band(flag, 0x7F) + (repeatRun and 3 or 1)
+			local value = repeatRun and bus:read8(src) or 0
+			if repeatRun then src += 1 end
+			for _ = 1, math.min(count, size - #out) do
+				if not repeatRun then value = bus:read8(src); src += 1 end
+				table.insert(out, value)
+			end
+		else
+			for bit = 7, 0, -1 do
+				if #out >= size then break end
+				if bit32.band(flag, bit32.lshift(1, bit)) == 0 then
+					table.insert(out, bus:read8(src)); src += 1
+				else
+					local b1, b2 = bus:read8(src), bus:read8(src + 1); src += 2
+					local length, distance = b1 // 16 + 3, (b1 % 16) * 256 + b2 + 1
+					assert(distance <= #out, "Invalid LZ77 backreference")
+					for _ = 1, math.min(length, size - #out) do table.insert(out, out[#out - distance + 1]) end
 				end
 			end
 		end
 	end
-end
-
-local function rlUncomp(cpu, vram: boolean)
-	local src = cpu.regs[1]
-	local dst = cpu.regs[2]
-	local bus = cpu.bus
-	local header = bus:read32(src)
-	src += 4
-	local size = bit32.band(header, 0xFFFFFF)
-	local out = 0
-	while out < size do
-		local flag = bus:read8(src); src += 1
-		if bit32.band(flag, 0x80) ~= 0 then
-			local count = (flag % 128) + 3
-			local value = bus:read8(src); src += 1
-			for _ = 1, count do bus:write8(dst + out, value); out += 1 end
-		else
-			local count = flag + 1
-			for _ = 1, count do bus:write8(dst + out, bus:read8(src)); src += 1; out += 1 end
-		end
+	if vram then
+		for i = 1, size, 2 do bus:write16(dst + i - 1, out[i] + (out[i + 1] or 0) * 256) end
+	else
+		for i = 1, size do bus:write8(dst + i - 1, out[i]) end
 	end
 end
 
@@ -146,30 +147,47 @@ local function halt(cpu)
 	cpu.halted = true
 end
 
-local function intrWait(cpu, discardOld: boolean)
-	local flags = cpu.regs[1]
-	if discardOld then
-		cpu.bus.interrupts.if_ = 0
+local function intrWait(cpu, vblank: boolean)
+	local discard = vblank or cpu.regs[1] ~= 0
+	local flags = vblank and 1 or bit32.band(cpu.regs[2], 0x3FFF)
+	local bus = cpu.bus
+	local checked = bus:read16(0x03007FF8)
+	if discard then
+		bus:write16(0x03007FF8, bit32.band(checked, bit32.bnot(flags)))
+	elseif bit32.band(checked, flags) ~= 0 then
+		bus:write16(0x03007FF8, bit32.band(checked, bit32.bnot(flags)))
+		return
 	end
+	cpu.bus.interrupts.ime = 1
 	cpu._intrWaitFlags = flags
 	cpu.halted = true
 end
 
 local function registerRamReset(cpu)
-	local flags = cpu.regs[1]
-	local bus = cpu.bus
-	if bit32.band(flags, 1) ~= 0 then
-		for i = 1, 0x8000 do bus.iwram[i] = 0 end
+	local flags, bus = cpu.regs[1], cpu.bus
+	local regions = { {1, bus.ewram, 0x40000}, {2, bus.iwram, 0x7E00},
+		{4, bus.pal, 0x400}, {8, bus.vram, 0x18000}, {16, bus.oam, 0x400} }
+	for _, region in regions do
+		if bit32.band(flags, region[1]) ~= 0 then
+			for i = 1, region[3] do region[2][i] = 0 end
+		end
 	end
-	if bit32.band(flags, 2) ~= 0 then
-		for i = 1, 0x40000 do bus.ewram[i] = 0 end
-	end
+	bus.ppu.dispcnt = 0x80
+	if bit32.band(flags, 0x40) ~= 0 then bus.sound:reset() end
+	if bit32.band(flags, 0x80) ~= 0 then bus.dma:reset(); bus.timers:reset(); bus.interrupts:reset() end
+end
+
+local function softReset(cpu)
+	local fromRAM = cpu.bus:read8(0x03007FFA) ~= 0
+	for i = 0x7E01, 0x8000 do cpu.bus.iwram[i] = 0 end
+	cpu:reset(fromRAM and 0x02000000 or 0x08000000)
+	cpu:setCPSR(0x1F)
 end
 
 -- Dispatch ------------------------------------------------------------------
 
 HLEBIOS.TABLE = {
-	[0x00] = function(cpu) cpu.halted = true end,                 -- SoftReset
+	[0x00] = softReset,                 -- SoftReset
 	[0x01] = registerRamReset,
 	[0x02] = halt,
 	[0x03] = halt,                                                 -- Stop
@@ -183,10 +201,10 @@ HLEBIOS.TABLE = {
 	[0x0B] = function(cpu) cpuSet(cpu, false) end,
 	[0x0C] = function(cpu) cpuSet(cpu, true) end,
 	[0x0D] = function(cpu) cpu.regs[1] = 0xBAAE187F end,           -- GetBiosChecksum
-	[0x11] = function(cpu) lz77(cpu, false) end,
-	[0x12] = function(cpu) lz77(cpu, true) end,
-	[0x14] = function(cpu) rlUncomp(cpu, false) end,
-	[0x15] = function(cpu) rlUncomp(cpu, true) end,
+	[0x11] = function(cpu) decompress(cpu, false, false) end,
+	[0x12] = function(cpu) decompress(cpu, true, false) end,
+	[0x14] = function(cpu) decompress(cpu, false, true) end,
+	[0x15] = function(cpu) decompress(cpu, true, true) end,
 }
 
 --- Handle a SWI. Returns true when handled in HLE.
@@ -196,9 +214,7 @@ function HLEBIOS:call(comment: number, cpu: any): boolean
 		fn(cpu)
 		return true
 	end
-	-- Unknown SWI: nop rather than crash; the diagnostics layer will see the
-	-- missing implementation if the game misbehaves.
-	return true
+	error(string.format("Unsupported BIOS SWI 0x%02X at PC 0x%08X", comment, cpu.regs[16]))
 end
 
 return HLEBIOS

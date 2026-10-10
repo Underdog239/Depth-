@@ -86,7 +86,7 @@ end
 
 function SaveBackend:_flashOffset(addr: number): number
 	if self.type == SaveBackend.FLASH1024 then
-		local bank = bit32.band(addr, 0x10000) ~= 0 and 1 or self.flashBank
+		local bank = self.flashBank
 		return bank * 0x10000 + bit32.band(addr, 0xFFFF)
 	end
 	return bit32.band(addr, 0xFFFF)
@@ -131,7 +131,7 @@ function SaveBackend:_flashWrite(addr: number, value: number)
 		return
 	end
 
-	if value == 0xF0 then
+	if value == 0xF0 and s ~= 6 then
 		self.flashState = 0
 		return
 	end
@@ -175,54 +175,49 @@ end
 
 -- EEPROM serial protocol (driven by DMA3) -----------------------------------
 
---- Feed one halfword from a DMA write. Bit 0 carries the serial bit.
-function SaveBackend:eepromWriteHalf(value: number)
-	local bit = bit32.band(value, 1)
-	table.insert(self.eeBits, bit)
-
-	-- frame: 1 leading zero, 2 command bits, then the byte address
-	if #self.eeBits == 3 then
-		self.eeCmd = self.eeBits[2] * 2 + self.eeBits[3] -- MSB first: 11=read, 10=write
-	end
-	local requestBits = 3 + self.eeAddrBits
-
-	if #self.eeBits == requestBits then
-		local addr = 0
-		for i = 1, self.eeAddrBits do
-			addr = addr * 2 + self.eeBits[3 + i]
-		end
-		self.eeAddr = addr % self.size
-		if self.eeCmd == 3 then
-			self.eeReadActive = true
-			self.eeReadAddr = self.eeAddr
-			self.eeOut = {}
-			table.clear(self.eeBits)
-			self.eeCmd = 0
-		end
-	elseif self.eeCmd == 2 and #self.eeBits == requestBits + 8 then
-		local byte = 0
-		for i = 1, 8 do
-			byte = byte * 2 + self.eeBits[requestBits + i]
-		end
-		self.data[self.eeAddr + 1] = byte
-		self.writes += 1
-		table.clear(self.eeBits)
-		self.eeCmd = 0
-	end
+--- DMA3 request length identifies the EEPROM address width (6 or 14 bits).
+function SaveBackend:beginEEPROM(count: number)
+	local bits = (count == 9 or count == 73) and 6 or ((count == 17 or count == 81) and 14 or nil)
+	assert(bits, "Invalid EEPROM DMA request length")
+	self.eeAddrBits = bits
+	self.size = bits == 6 and 512 or 8192
+	for i = #self.data + 1, self.size do self.data[i] = 0xFF end
+	for i = #self.data, self.size + 1, -1 do self.data[i] = nil end
+	table.clear(self.eeBits)
 end
 
---- Produce the next halfword for a DMA read (bit 0 carries the serial bit).
-function SaveBackend:eepromReadHalf(): number
-	if not self.eeReadActive then return 0xFFFF end
-	if #self.eeOut == 0 then
-		local byte = self.data[self.eeReadAddr + 1] or 0xFF
-		self.eeOut = { 0 } -- one leading bit
-		for b = 8, 1, -1 do
-			table.insert(self.eeOut, byte // 2 ^ (b - 1) % 2)
+function SaveBackend:eepromWriteHalf(value: number)
+	table.insert(self.eeBits, bit32.band(value, 1))
+	if #self.eeBits < 2 then return end
+	local read = self.eeBits[2] == 1
+	local length = 2 + self.eeAddrBits + (read and 0 or 64) + 1
+	if #self.eeBits ~= length then return end
+	local bits = self.eeBits
+	assert(bits[1] == 1 and bits[length] == 0, "Invalid EEPROM serial frame")
+	local block = 0
+	for i = 3, 2 + self.eeAddrBits do block = block * 2 + bits[i] end
+	local addr = (block * 8) % self.size
+	if read then
+		self.eeOut = {0, 0, 0, 0}
+		for i = 1, 8 do
+			local byte = self.data[addr + i]
+			for bit = 7, 0, -1 do table.insert(self.eeOut, bit32.band(bit32.rshift(byte, bit), 1)) end
 		end
-		self.eeReadAddr = self.eeReadAddr + 1
+		self.eeReadActive = true
+	else
+		for i = 0, 7 do
+			local byte = 0
+			for bit = 1, 8 do byte = byte * 2 + bits[2 + self.eeAddrBits + i * 8 + bit] end
+			self.data[addr + i + 1] = byte
+		end
+		self.writes += 1
 	end
-	return table.remove(self.eeOut, 1) or 0
+	table.clear(self.eeBits)
+end
+
+function SaveBackend:eepromReadHalf(): number
+	if #self.eeOut == 0 then self.eeReadActive = false; return 1 end
+	return table.remove(self.eeOut, 1)
 end
 
 function SaveBackend:reset()
@@ -233,7 +228,6 @@ function SaveBackend:reset()
 	self.eeCmd = 0
 	self.eeReadActive = false
 	table.clear(self.eeOut)
-	for i = 1, self.size do self.data[i] = 0xFF end
 end
 
 return SaveBackend

@@ -1,20 +1,6 @@
 --!strict
---[[ Audio (init)
-
- The bridge between the emulated APU and Roblox. Roblox has no PCM playback API,
- so this module does two real things instead of pretending:
-
-   1. Consumes APU sample batches and computes a smoothed level / peak, which the
-      UI renders as a VU meter. That is direct, visible evidence the audio path
-      is alive.
-
-   2. If the project supplies Sound assets for the synth channels (see
-      Config.AUDIO), it drives Roblox Sound objects so the four PSG channels are
-      audible. Without supplied assets there is nothing to play, so the level
-      meter is the output.
-
- Nothing here is required for emulation to be correct.
- ]]
+-- Sample monitor for the testing build. Computes levels for the UI; this
+-- adapter does not provide audible playback.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage.Shared.Config)
@@ -30,19 +16,9 @@ function AudioBridge.new(apu: any)
 		samples = 0,
 		batches = 0,
 		lastBatch = 0,
-		synth = nil,
 	}, AudioBridge) :: any
 	apu:setSink(function(batch) self:_onSamples(batch) end)
-	if Config.AUDIO.mode == "synth" then
-		self:_installSynth()
-	end
 	return self
-end
-
-function AudioBridge:_installSynth()
-	-- Synth playback needs per-channel Sound assets; without them we stay on the
-	-- level meter. This is a capability check, not a failure.
-	self.synth = nil
 end
 
 function AudioBridge:_onSamples(batch: { number })
