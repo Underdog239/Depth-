@@ -28,7 +28,14 @@ function Dashboard.new(diag: any, parent: Instance?)
 	self.filter = nil
 	self.rows = {}
 	self:_build(parent)
-	self._conn = diag.onFinding:connect(function() self:refresh() end)
+	self._dirty = true
+	self._conn = diag.onFinding:connect(function() self._dirty = true end)
+	self._refreshTask = task.spawn(function()
+		while self.gui do
+			task.wait(1)
+			if self.gui and self.gui.Enabled then self:refresh() end
+		end
+	end)
 	self:refresh()
 	return self
 end
@@ -56,27 +63,30 @@ function Dashboard:_build(parent: Instance?)
 	self.gui = gui
 
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.fromOffset(560, 420)
-	frame.Position = UDim2.new(0.5, -280, 0.5, -210)
+	frame.Size = UDim2.new(0.94, 0, 0.86, 0)
+	frame.AnchorPoint = Vector2.new(0.5,0.5)
+	frame.Position = UDim2.fromScale(0.5,0.5)
+	local limit = Instance.new("UISizeConstraint")
+	limit.MaxSize = Vector2.new(700,650); limit.Parent = frame
 	frame.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 	frame.BorderSizePixel = 0
 	frame.Parent = gui
 	self.frame = frame
 
 	local title = Instance.new("TextLabel")
-	title.Text = "GBA Diagnostics - background findings"
+	title.Text = "Health report"
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 16
 	title.TextColor3 = Color3.new(1, 1, 1)
 	title.BackgroundTransparency = 1
-	title.Size = UDim2.new(1, -20, 0, 28)
+	title.Size = UDim2.new(1, -90, 0, 28)
 	title.Position = UDim2.fromOffset(10, 8)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = frame
 	local close = makeButton("Close", frame)
 	close.Size = UDim2.fromOffset(60, 24)
 	close.Position = UDim2.new(1, -70, 0, 8)
-	close.MouseButton1Click:Connect(function() gui.Enabled = false end)
+	close.Activated:Connect(function() gui.Enabled = false end)
 
 	local summary = Instance.new("TextLabel")
 	summary.Name = "Summary"
@@ -85,7 +95,8 @@ function Dashboard:_build(parent: Instance?)
 	summary.TextSize = 12
 	summary.TextColor3 = Color3.fromRGB(180, 190, 210)
 	summary.BackgroundTransparency = 1
-	summary.Size = UDim2.new(1, -20, 0, 40)
+	summary.Size = UDim2.new(1, -20, 0, 70)
+	summary.TextWrapped = true
 	summary.Position = UDim2.fromOffset(10, 34)
 	summary.TextXAlignment = Enum.TextXAlignment.Left
 	summary.TextYAlignment = Enum.TextYAlignment.Top
@@ -93,25 +104,26 @@ function Dashboard:_build(parent: Instance?)
 	self.summary = summary
 
 	local buttons = Instance.new("Frame")
-	buttons.Size = UDim2.new(1, -20, 0, 28)
-	buttons.Position = UDim2.fromOffset(10, 76)
+	buttons.Size = UDim2.new(1, -20, 0, 44)
+	buttons.Position = UDim2.fromOffset(10, 108)
 	buttons.BackgroundTransparency = 1
 	buttons.Parent = frame
 
 	local filters = { "all", "error", "bug", "vulnerability", "unfinished" }
 	for i, name in filters do
-		local b = makeButton(string.upper(name), buttons, CATEGORY_COLORS[name])
-		b.Size = UDim2.fromOffset(96, 26)
-		b.Position = UDim2.fromOffset((i - 1) * 100, 0)
-		b.MouseButton1Click:Connect(function()
+		local b = makeButton(name == "vulnerability" and "Security" or name, buttons, CATEGORY_COLORS[name])
+		b.TextSize = 10
+		b.Size = UDim2.new(0.2,-3,1,0)
+		b.Position = UDim2.fromScale((i-1)*0.2,0)
+		b.Activated:Connect(function()
 			self.filter = if name == "all" then nil else name
 			self:refresh()
 		end)
 	end
 
 	local scroll = Instance.new("ScrollingFrame")
-	scroll.Size = UDim2.new(1, -20, 1, -190)
-	scroll.Position = UDim2.fromOffset(10, 110)
+	scroll.Size = UDim2.new(1, -20, 1, -170)
+	scroll.Position = UDim2.fromOffset(10, 160)
 	scroll.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 	scroll.BorderSizePixel = 0
 	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -127,24 +139,28 @@ function Dashboard:_build(parent: Instance?)
 end
 
 function Dashboard:refresh()
-	if not self.gui then return end
+	if not self.gui or not self.gui.Enabled then return end
 	local counts = self.diag.summary().counts
 	self.summary.Text = string.format(
-		"error: %d   bug: %d   vulnerability: %d   unfinished: %d\nscans run: %d",
+		"error: %d   bug: %d   vulnerability: %d   unfinished: %d\nscans: %d | source: " .. self.diag.summary().sourceHash:sub(1,8) .. "\nRepository findings are bundled with this build. Live checks run locally. Showing latest 60.",
 		counts.error or 0, counts.bug or 0, counts.vulnerability or 0, counts.unfinished or 0,
 		self.diag.summary().scanRuns or 0
 	)
 
+	if not self._dirty and self._lastFilter == self.filter then return end
+	self._dirty = false
+	self._lastFilter = self.filter
 	for _, row in self.rows do row:Destroy() end
 	table.clear(self.rows)
 
 	local list = self.diag.findings({ category = self.filter })
 	table.sort(list, function(a, b) return a.lastSeen > b.lastSeen end)
 	for i, f in list do
+		if i > 60 then break end
 		local row = Instance.new("Frame")
 		row.BackgroundColor3 = Color3.fromRGB(30, 33, 42)
 		row.BorderSizePixel = 0
-		row.Size = UDim2.new(1, -8, 0, 56)
+		row.Size = UDim2.new(1, -8, 0, 118)
 		row.LayoutOrder = i
 		row.Parent = self.scroll
 
@@ -160,15 +176,15 @@ function Dashboard:refresh()
 		tag.Parent = row
 
 		local msg = Instance.new("TextLabel")
-		msg.Text = string.format("[x%d] %s", f.count, f.message)
+		msg.Text = string.format("%s · [x%d] %s", f.source, f.count, f.message)
 		msg.Font = Enum.Font.Code
 		msg.TextSize = 12
 		msg.TextColor3 = Color3.fromRGB(220, 225, 235)
 		msg.BackgroundTransparency = 1
-		msg.Size = UDim2.new(1, -16, 0, 18)
+		msg.Size = UDim2.new(1, -16, 0, 48)
 		msg.Position = UDim2.fromOffset(8, 20)
 		msg.TextXAlignment = Enum.TextXAlignment.Left
-		msg.TextTruncate = Enum.TextTruncate.AtEnd
+		msg.TextWrapped = true
 		msg.Parent = row
 
 		local fix = Instance.new("TextLabel")
@@ -177,10 +193,10 @@ function Dashboard:refresh()
 		fix.TextSize = 11
 		fix.TextColor3 = Color3.fromRGB(140, 200, 150)
 		fix.BackgroundTransparency = 1
-		fix.Size = UDim2.new(1, -16, 0, 16)
-		fix.Position = UDim2.fromOffset(8, 38)
+		fix.Size = UDim2.new(1, -16, 0, 42)
+		fix.Position = UDim2.fromOffset(8, 70)
 		fix.TextXAlignment = Enum.TextXAlignment.Left
-		fix.TextTruncate = Enum.TextTruncate.AtEnd
+		fix.TextWrapped = true
 		fix.Parent = row
 
 		table.insert(self.rows, row)
@@ -193,8 +209,9 @@ function Dashboard:toggle()
 end
 
 function Dashboard:destroy()
+	if self._refreshTask then task.cancel(self._refreshTask) end
 	if self._conn then self._conn:disconnect() end
-	if self.gui then self.gui:Destroy() end
+	if self.gui then self.gui:Destroy(); self.gui = nil end
 end
 
 return Dashboard

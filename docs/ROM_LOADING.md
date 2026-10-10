@@ -1,55 +1,25 @@
-# Loading ROMs
+# Easy ROM loading
 
-Roblox clients cannot read local files, so ROMs reach the emulator as bytes:
+Download `web/rom-tool.html` from the repository and open it in a browser.
+Select a `.gba` ROM, then Generate. The file never leaves your browser.
 
-## 1. In-game (base64 paste)
+- **Small ROM:** Copy base64 → Depth Menu → Add a game → Load pasted ROM.
+- **Larger ROM in Studio:** Download Studio ROM installer. Stop Play, open the
+  downloaded script, paste it into Studio's Command Bar, then Play. No Rojo
+  setup is needed. The installer refuses to overwrite an existing Assets.ROM.
+- **Rojo:** Download ROM module as `src/Assets/ROM.luau`; rebuild/sync.
 
-Encode your legally-owned ROM and paste it into the box in the UI:
+Use ROMs you can legally use. Nothing is uploaded by the helper. A normal
+Roblox client cannot open device files or fetch arbitrary HTTP ROM URLs.
+Mobile players receive ROM assets already embedded in the place or can paste
+small base64 ROMs; installing larger ROMs requires desktop Roblox Studio.
 
-```bash
-base64 -w0 myrom.gba > myrom.b64
-```
+The maximum embedded ROM is 32 MiB; the paste box accepts 200,000 characters.
+Large scripts may exceed practical Studio Command Bar limits; use the Rojo
+module workflow when that happens. Header checksum warnings are reported but
+are not a guarantee of compatibility. BIOS support is partial.
 
-Press **Load ROM**. The client decodes it and boots. The paste box is limited
-to 200,000 characters. For larger files, use `web/rom-tool.html` to generate
-`src/Assets/ROM.luau`, then rebuild or sync through Rojo.
-
-## 2. Programmatically
-
-```lua
-local GBA = require(script.Parent.Emulator.GBA)
-local gba = GBA.new({ rom = romBytes })   -- romBytes = {number} of bytes
-```
-
-## 3. Test ROM
-
-```bash
-python3 tools/make_test_rom.py test.gba
-```
-
-An original homebrew ROM that paints the screen - the fastest way to confirm the
-emulator, renderer and PPU all work.
-
-## BIOS
-
-By default a partial **HLE BIOS** handles selected SWIs in Luau. Unsupported
-calls stop with a diagnostic error; game compatibility varies. The core also
-accepts an optional BIOS byte array, but that path has not been validated in
-this testing build:
-
-```lua
-local GBA = require(script.Parent.Emulator.GBA)
-local gba = GBA.new({ rom = romBytes, bios = biosBytes })
-```
-
-## Saves
-
-Save types (SRAM / Flash / EEPROM) are detected from signatures in the ROM
-with a small game-code fallback table. The backing
-store is exposed as `gba:saveBytes()` / `gba:loadSaveBytes(bytes)` for you to
-persist wherever you like.
-
-## Legal
-
-Nothing copyrighted is included. Only load ROMs and BIOS images you are legally
-entitled to use.
+Before replacing a game, export its battery save through the Menu and keep the
+text in a file. Stop Play and back up/remove the old Assets.ROM before installing
+a new one. Import save text only after loading the same game; matching byte
+length alone does not identify the game. State snapshots stay within a session.

@@ -27,6 +27,7 @@ local Store = require(script.Store)
 local StaticScan = require(script.StaticScan)
 local Watchdog = require(script.Watchdog)
 local Hooks = require(script.Hooks)
+local BuildReport = require(ReplicatedStorage.Shared.BuildReport)
 
 export type Finding = Classifier.Finding
 
@@ -42,6 +43,7 @@ Diag._installed = false
 Diag._lastScan = 0
 Diag._scanRuns = 0
 Diag._backgroundTask = nil :: thread?
+Diag._sourceScanned = false
 
 -- Core capture --------------------------------------------------------------
 
@@ -70,6 +72,7 @@ end
 function Diag.report(message: string, meta: { [string]: any }?)
 	Diag.capture({
 		message = message,
+		stack = meta and meta.stack,
 		source = (meta and meta.source) or "manual",
 		kind = (meta and meta.kind) or nil,
 		hint = (meta and meta.severity) or nil,
@@ -106,6 +109,7 @@ function Diag.summary()
 		lastScan = Diag._lastScan,
 		scanRuns = Diag._scanRuns,
 		stalls = 0,
+		sourceHash = BuildReport.sourceHash,
 	}
 end
 
@@ -130,12 +134,12 @@ local function runScan()
 	Diag._lastScan = os.clock()
 	Diag._scanRuns += 1
 
-	-- (a) static analysis of our own live scripts
-	local root = script.Parent -- GBAClient
-	local ok, hits = pcall(StaticScan.scanInstance, root)
-	if ok and hits then
-		for _, f in StaticScan.toFindings(hits) do
-			Diag._store:add(f)
+	-- Source is immutable/protected in ordinary clients. Probe only once.
+	if not Diag._sourceScanned then
+		Diag._sourceScanned = true
+		local ok, hits = pcall(StaticScan.scanInstance, script.Parent, {maxLines = 2000})
+		if ok and hits then
+			for _, f in StaticScan.toFindings(hits) do Diag.onFinding:fire(Diag._store:add(f)) end
 		end
 	end
 
@@ -154,6 +158,13 @@ end
 function Diag.install()
 	if Diag._installed then return end
 	Diag._installed = true
+	for _, entry in BuildReport.findings do
+		local finding = Classifier.makeFinding({message=entry.message,
+			source=entry.source .. ":" .. entry.line, hint=entry.severity, kind=entry.category})
+		finding.category = entry.category
+		finding.symbol = Classifier.symbolFor(entry.category, entry.message, finding.source)
+		Diag._store:add(finding)
+	end
 
 	Logger.attachSink(function(level, msg)
 		if level == "error" or level == "fatal" or level == "warn" then
@@ -181,6 +192,8 @@ end
 
 function Diag.shutdown()
 	Diag._installed = false
+	if Diag._backgroundTask then task.cancel(Diag._backgroundTask); Diag._backgroundTask = nil end
+	Hooks.uninstall()
 	Diag.onFinding:clear()
 end
 

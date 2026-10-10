@@ -1,4 +1,4 @@
-# Testing Depth 0.2.0
+# Testing Depth 0.3.0
 
 ## Fastest path
 
@@ -42,9 +42,19 @@ These checks require Roblox Studio and remain manual acceptance gates.
     between emulation slices. Record renderer, game code and metrics when
     reporting a stall or graphical problem.
 
-Audio is intentionally silent in this build. A changing monitor level confirms
-sample generation only. Settings can be changed in `src/Shared/Config.luau`.
-Keyboard mappings can be edited there; no in-game remapping menu is included.
+11. **Mobile:** test portrait and landscape at phone/tablet sizes; hold two
+    touch buttons together, release each independently, switch focus and return.
+12. **Remapping:** select A/B in Menu → Controls, press a new keyboard/controller
+    button, and test it. Check timeout, cancellation and Restore defaults. Typing
+    into ROM/save boxes must not move the game.
+13. **Audio:** follow docs/AUDIO.md, upload the supplied original waveform with
+    experience permission, enter its ID and press Test tone. Verify mute,
+    pause/background silence and playback of a square-channel ROM. Wave/noise/
+    FIFO music is not played by this adapter. Missing assets must be reported.
+14. **Health:** check the three bundled known limits, source hash and fresh scan
+    count. Confirm idle/hidden dashboards do not continuously rebuild rows.
+15. **Performance:** follow the ten-minute real-device checklist in
+    docs/PERFORMANCE.md. Automated passes do not certify midrange support.
 
 ## Automated verification
 
@@ -54,6 +64,10 @@ Validated tooling for this branch: Python 3.9.25, Luau 0.742 and Rojo 7.7.1.
 python3 tools/prepare_tests.py
 luau build/Tests/run.luau
 luau build/Tests/regressions.luau
+luau build/Tests/client_features.luau
+python3 tools/check_client_adapters.py
+node tools/check_rom_tool.cjs
+python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
 python3 tools/fetch_gba_tests.py
 luau build/Tests/gba_suite.luau
 rojo build default.project.json -o Depth-testing.rbxlx

@@ -37,7 +37,9 @@ Diagnostics.setWatchdogReporter(watchdog)
 
 -- 2. Machine + supporting layers ---------------------------------------------
 local profiler = Profiler.new()
-local adaptive = Adaptive.new()
+local UIS = game:GetService("UserInputService")
+local adaptive = Adaptive.new(UIS.TouchEnabled)
+local menuOpen, focused = true, true
 local gba = GBA.new({ diag = Diagnostics })
 local audio = AudioBridge.new(gba.apu)
 local running = false
@@ -52,7 +54,7 @@ local function describeRom(info: any, byteCount: number): string
 	return string.format("ROM: %s  (%s, %d KiB, save=%s)", info.title, info.gameCode, byteCount // 1024, info.saveType)
 end
 
-local function loadRomBytes(bytes: { number })
+local function loadRomBytes(bytes: buffer)
 	local ok, info = pcall(function() return gba:loadROM(bytes) end)
 	if not ok then
 		ui:setStatus("ROM load failed: " .. tostring(info))
@@ -72,9 +74,25 @@ local function loadRomBytes(bytes: { number })
 end
 
 local hooks = {
+	onTouch = function(source, bit, down) if input then input:touch(source, bit, down) end end,
+	onMenuChange = function(open)
+		menuOpen = open
+		if input then input:setEnabled(not open and focused); input.capture = nil end
+		audio:setActive(running and not paused and not open and focused)
+	end,
+	onRemap = function(bit, done)
+		game:GetService("GuiService").SelectedObject = nil
+		input:beginMapping(bit, done)
+	end,
+	onResetBindings = function() input:resetBindings() end,
+	describeBinding = function(bit) return input:describe(bit) end,
+	onLowPower = function(enabled) adaptive:setLowPower(enabled) end,
+	onMute = function(muted) audio:setMuted(muted) end,
+	onAudioAsset = function(text) return audio:setAsset(text) end,
+	onTestTone = function() return audio:testTone() end,
 	onDemo = function() loadRomBytes(DemoROM.create()) end,
-	onLoadROM = function(bytes: { number })
-		loadRomBytes(bytes)
+	onLoadROM = function(bytes: buffer)
+		return loadRomBytes(bytes)
 	end,
 	onPlayPause = function()
 		if not running then return false end
@@ -99,7 +117,7 @@ local hooks = {
 	onLoadState = function()
 		if savedState and SaveState.load(gba, savedState) then
 			running = true
-			renderer:present(gba:framebuffer())
+			renderer:present(gba:framebuffer(), true)
 			ui:setRunning(not paused)
 			ui:setStatus("State restored")
 		else
@@ -130,6 +148,15 @@ local hooks = {
 ui = UI.new(hooks)
 renderer = Renderer.new(ui.screenHost, { scale = Config.RENDER.scale })
 input = InputManager.new()
+input:setEnabled(false)
+input.onMenu = function() ui:showMenu(not ui.open) end
+ui:updateBindings()
+UIS.WindowFocusReleased:Connect(function()
+	focused = false; input:setEnabled(false); audio:setActive(false); audio:stopTest()
+end)
+UIS.WindowFocused:Connect(function()
+	focused = true; input:setEnabled(not menuOpen)
+end)
 dashboard = Dashboard.new(Diagnostics, ui.gui.Parent)
 
 -- 3. Embedded ROM auto-load ---------------------------------------------------
@@ -138,7 +165,7 @@ task.spawn(function()
 	if not ok then ui:setStatus("Embedded ROM failed: " .. tostring(bytes)); return end
 	if bytes then
 		Logger.info(`embedded ROM found via {source} ({buffer.len(bytes) // 1024} KiB)`)
-		loadRomBytes(bytes)
+		if loadRomBytes(bytes) then ui:showMenu(false) end
 	else
 		ui:setStatus(`{Config.VERSION} ready - no embedded ROM ({source}). Paste base64 or add Assets.ROM`)
 	end
@@ -169,25 +196,26 @@ local function onFrame(dt: number)
 	local frameStart = os.clock()
 	frameIndex += 1
 
-	input:pollStick()
-	if running and not paused then
+	local playing = running and not paused and not menuOpen and focused
+	audio:setActive(playing)
+	if playing then
 		emulationDebt = math.min(emulationDebt + dt, 2 / Config.FPS)
 	end
-	if running and not paused and emulationDebt >= 1 / Config.FPS then
+	if playing and emulationDebt >= 1 / Config.FPS then
 		gba:setKeys(input.mask)
 		watchdog:beginFrame(frameIndex)
 		profiler:beginSection("emulate")
-		local ok, err = pcall(function() gba:runFrame(Config.CORE.clientSliceMs) end)
+		local ok, err = pcall(function() gba:runFrame(adaptive.sliceMs) end)
 		profiler:endSection("emulate")
 		watchdog:endFrame(frameIndex, gba.bus.cycles)
 		if not ok then
 			Diagnostics.report(`emulation error: {err}`, { source = "frameLoop", kind = "runtime-error", severity = "error", stack = debug.traceback() })
 			running = false
+			audio:setActive(false)
 			ui:setRunning(false)
 			ui:setStatus("Emulation stopped: " .. tostring(err))
 		end
 
-		audio:pump()
 
 		if gba.ppu.frameComplete then
 			emulationDebt = math.max(0, emulationDebt - 1 / Config.FPS)
@@ -203,17 +231,15 @@ local function onFrame(dt: number)
 	end
 
 	local frameMs = math.max(dt, os.clock() - frameStart) * 1000
-	if running and not paused then adaptive:sample(frameMs) end
-	if renderer.currentScale ~= adaptive.currentScale then
-		renderer:setScale(adaptive.currentScale)
-		ui:setScale(adaptive.currentScale)
-	end
+	if playing then adaptive:sample(frameMs) end
+	audio:pump()
+	if frameIndex % 60 == 0 then ui:setAudioStatus(audio:status()) end
 
-	if frameIndex % 30 == 0 and running and not paused then
+	if frameIndex % 30 == 0 then
 		local p = profiler:report()
-		local a = audio:stats()
-		ui:setMetrics(string.format("emu %.1fms | present %.1fms | %s | audio monitor %.0f%%",
-			p.emulate or 0, p.present or 0, renderer.backend, a.level * 100))
+		-- UI refresh is throttled independently of emulation.
+		ui:setMetrics(string.format("%s | work %.1fms | budget %.0fms | %.0f FPS",
+			renderer.backend, p.emulate or 0, adaptive.sliceMs, 1000 / adaptive.averageMs))
 	end
 end
 
@@ -221,6 +247,8 @@ RunService.RenderStepped:Connect(function(dt)
 	local ok, err = pcall(onFrame, dt)
 	if not ok then
 		running = false
+		audio:setActive(false)
+		ui:setRunning(false)
 		ui:setStatus("Frame error: " .. tostring(err))
 		Diagnostics.report(`frame loop crashed: {err}`, { source = "RenderStepped", kind = "runtime-error", severity = "fatal" })
 	end

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LuauGBA - ROM embedding tool</title>
+<title>LuauGBA - ROM helper</title>
 <style>
   :root { --bg:#12141a; --panel:#1b1e27; --line:#2c313d; --fg:#e6e9f0; --dim:#98a0b3; --accent:#5cc8a1; --warn:#e0a33c; }
   * { box-sizing:border-box; }
@@ -32,12 +32,12 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>LuauGBA - ROM embedding tool</h1>
+  <h1>LuauGBA - ROM helper</h1>
   <div class="sub">Runs entirely in your browser. The ROM is never uploaded anywhere.</div>
 
   <div class="panel">
     <h2>1. Choose a ROM</h2>
-    <div id="drop">drop a .gba file here, or click to choose</div>
+    <div id="drop" role="button" tabindex="0">drop a .gba file here, or click to choose</div>
     <input id="file" type="file" accept=".gba,.agb,.bin" hidden>
     <div id="info" style="margin-top:14px"></div>
   </div>
@@ -47,7 +47,8 @@
     <div class="row">
       <label>chunk size <input id="chunk" type="number" value="50000" min="1000" max="200000" style="width:110px;background:#0d0f14;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px"></label>
       <button id="gen" disabled>Generate ROM.luau</button>
-      <button id="dl" class="ghost" disabled>Download</button>
+      <button id="dl" class="ghost" disabled>Download ROM module</button>
+      <button id="install" class="ghost" disabled>Download Studio ROM installer</button>
       <button id="copy" class="ghost" disabled>Copy base64</button>
     </div>
     <div id="status" style="margin-top:12px;color:var(--dim)"></div>
@@ -56,9 +57,10 @@
   <div class="panel">
     <h2>3. Install it</h2>
     <ol>
-      <li>Save the download as <code>src/Assets/ROM.luau</code> in the LuauGBA repo.</li>
-      <li>Make sure <code>default.project.json</code> maps <code>src/Assets</code> to <code>ReplicatedStorage.Assets</code>.</li>
-      <li>Run <code>rojo serve</code>, connect in Studio, press Play. The client auto-loads it.</li>
+      <li><b>Small ROM:</b> Generate, Copy base64, then open Depth's Menu → Add a game → Load pasted ROM.</li>
+      <li><b>Larger ROM in your own Studio place:</b> Download Studio ROM installer. Stop Play, open the downloaded text file, and paste it into Studio's Command Bar. Press Play: the ROM loads automatically.</li>
+      <li>If replacing a game, export its battery save first. In Edit mode remove only your old <code>ReplicatedStorage.Assets.ROM</code>, then run the new ROM installer.</li>
+      <li><b>Rojo users:</b> Download ROM module as <code>src/Assets/ROM.luau</code>, then rebuild/sync.</li>
     </ol>
     <div class="sub" style="margin:0">Do not commit ROM.luau to git - it is already in .gitignore.</div>
   </div>
@@ -95,7 +97,8 @@ function parseHeader(u8) {
 function escapeHTML(value) { return String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function load(u8, fileName) {
-  b64 = null; window.__romluau = null; preview.value = "";
+  b64 = null; bytes = null; window.__romluau = null; window.__rominstaller = null; preview.value = ""; infoEl.innerHTML = "";
+  document.getElementById("install").disabled = true;
   document.getElementById("dl").disabled = true;
   document.getElementById("copy").disabled = true;
   document.getElementById("gen").disabled = true;
@@ -116,15 +119,51 @@ function load(u8, fileName) {
 }
 
 drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
 fileInput.addEventListener('change', e => { if (e.target.files[0]) readFile(e.target.files[0]); });
 ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
 
+let readVersion = 0;
 function readFile(f) {
+  const version = ++readVersion;
+  load(new Uint8Array(0), '');
+  if (f.size < 192 || f.size > 32 * 1024 * 1024) return;
+  statusEl.textContent = 'Reading file locally…';
   const r = new FileReader();
-  r.onload = () => load(new Uint8Array(r.result), f.name);
+  r.onload = () => { if (version === readVersion) load(new Uint8Array(r.result), f.name); };
+  r.onerror = () => { if (version === readVersion) statusEl.textContent = 'Could not read this file. Choose it again.'; };
   r.readAsArrayBuffer(f);
+}
+function longString(text) {
+  let eq = '=';
+  while (text.includes(']' + eq + ']')) eq += '=';
+  return '[' + eq + '[\n' + text + ']' + eq + ']';
+}
+function romInstaller(source) {
+  return `-- Depth ROM installer: run in Studio Command Bar while stopped.
+local rs = game:GetService("RunService")
+assert(rs:IsStudio() and not rs:IsRunning(), "Stop Play and use Studio Command Bar")
+local storage = game:GetService("ReplicatedStorage")
+local assets = storage:FindFirstChild("Assets")
+assert(not assets or assets:IsA("Folder"), "Assets must be a Folder")
+assert(not assets or not assets:FindFirstChild("ROM"), "Assets.ROM exists; back it up and remove it first")
+local module = Instance.new("ModuleScript")
+module.Name = "ROM"
+local ok, failure = pcall(function() module.Source = ${longString(source)} end)
+if not ok then module:Destroy(); error(failure) end
+if not assets then assets = Instance.new("Folder"); assets.Name = "Assets"; assets.Parent = storage end
+module.Parent = assets
+print("ROM installed. Press Play to load it.")
+`;
+}
+function download(text, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type:'text/plain'}));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function toBase64(u8) {
@@ -137,7 +176,8 @@ function toBase64(u8) {
 let b64 = null;
 
 document.getElementById('gen').addEventListener('click', () => {
-  const chunkSize = Math.max(1000, parseInt(document.getElementById('chunk').value, 10) || 50000);
+  if (!bytes) return;
+  const chunkSize = Math.min(200000, Math.max(1000, parseInt(document.getElementById('chunk').value, 10) || 50000));
   b64 = toBase64(bytes);
   const chunks = [];
   for (let i = 0; i < b64.length; i += chunkSize) chunks.push(b64.slice(i, i + chunkSize));
@@ -146,6 +186,8 @@ document.getElementById('gen').addEventListener('click', () => {
     + '-- ' + bytes.length + ' bytes, ' + chunks.length + ' base64 chunks.\n\n'
     + 'return {\n' + chunks.map(c => '\t"' + c + '",').join('\n') + '\n}\n';
   window.__romluau = out;
+  window.__rominstaller = romInstaller(out);
+  document.getElementById("install").disabled = false;
   preview.value = out.slice(0, 4000) + (out.length > 4000 ? '\n... (' + (out.length - 4000).toLocaleString() + ' more characters)' : '');
   statusEl.innerHTML = `generated <b>${out.length.toLocaleString()}</b> characters in ${chunks.length} chunks <span class="ok">(ok)</span>`;
   document.getElementById('dl').disabled = false;
@@ -153,12 +195,10 @@ document.getElementById('gen').addEventListener('click', () => {
 });
 
 document.getElementById('dl').addEventListener('click', () => {
-  const blob = new Blob([window.__romluau], { type: 'text/plain' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'ROM.luau';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  if (window.__romluau) download(window.__romluau, 'ROM.luau');
+});
+document.getElementById('install').addEventListener('click', () => {
+  if (window.__rominstaller) download(window.__rominstaller, 'Install-ROM.luau');
 });
 
 document.getElementById('copy').addEventListener('click', async () => {
@@ -167,7 +207,7 @@ document.getElementById('copy').addEventListener('click', async () => {
     statusEl.innerHTML = `<span class="warn">base64 is ${b64.length.toLocaleString()} chars - too large for the in-game paste box. Use the module instead.</span>`;
   }
   try { await navigator.clipboard.writeText(b64); statusEl.innerHTML += ' <span class="ok">copied</span>'; }
-  catch { statusEl.innerHTML += ' <span class="warn">clipboard blocked</span>'; }
+  catch { preview.value = b64; preview.select(); statusEl.textContent = 'Clipboard blocked. Base64 is selected in Preview; copy it manually.'; }
 });
 </script>
 </body>

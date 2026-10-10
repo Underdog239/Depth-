@@ -5,7 +5,7 @@
 
 local Config = {}
 
-Config.VERSION = "0.2.0-testing"
+Config.VERSION = "0.3.0-testing"
 
 -- Emulation clock targets ---------------------------------------------------
 -- GBA: 16.777216 MHz CPU, 59.7275 Hz display, 280896 cycles per frame.
@@ -31,7 +31,7 @@ Config.RENDER = {
 -- Core loop -----------------------------------------------------------------
 Config.CORE = {
 	-- Yield the client frame after this budget; headless tests run whole frames.
-	clientSliceMs = 12,
+	clientSliceMs = 8,
 	-- Hard ceiling on emulated instructions per rendered frame. Prevents a
 	-- runaway frame from freezing the Roblox client (watchdog guards too).
 	maxCyclesPerFrame = Config.CYCLES_PER_FRAME * 2,
@@ -43,19 +43,20 @@ Config.CORE = {
 	traceInstructions = false,
 }
 
--- Audio monitoring generates samples for inspection. Audible playback is not
--- implemented in this testing build.
+-- PCM monitoring plus optional uploaded square-wave approximation.
+-- Full PCM playback is unavailable through public Roblox client APIs.
 Config.AUDIO = {
 	enabled = true,
 	sampleRate = 32768,
 	mode = "monitor" :: "off" | "monitor",
 	master = 0.6,
+	squareAssetId = "", -- Upload output/Depth-square-256Hz.wav; enter its Roblox ID.
 }
 
 -- Diagnostics ---------------------------------------------------------------
 Config.DIAG = {
 	enabled = true,
-	scanInterval = 2.0,
+	scanInterval = 10.0,
 	maxEvents = 500,
 	minSeverity = "info",
 	categories = { "error", "bug", "vulnerability", "unfinished" },
@@ -91,5 +92,8 @@ Config.INPUT = {
 	},
 	stickDeadzone = 0.25,
 }
+
+Config.ROM_HELP_URL = "https://github.com/Underdog239/Depth-/blob/coderabbit/explain-code-limit/230c69a5/web/rom-tool.html"
+Config.REPORT_URL = "https://github.com/Underdog239/Depth-/actions/workflows/health.yml"
 
 return Config

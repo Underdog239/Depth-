@@ -23,6 +23,7 @@ def validate(path):
         if source is None:
             continue
         text = source.text or ""
+        text = text.replace('game:GetService("ReplicatedStorage").Shared', 'ReplicatedStorage.Shared')
         if re.search(r':\s*(?:InvokeServer|FireServer|GetDataStore)\s*\(', text):
             raise ValueError("Server API call in client-only source")
         for match in re.finditer(r"require\((script|ReplicatedStorage)((?:\.[A-Za-z0-9_]+)+)\)", text):

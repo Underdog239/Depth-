@@ -35,7 +35,7 @@ function Renderer.new(parent: Instance, options: any?)
 	self.container.Name = "GBAScreen"
 	self.container.BackgroundColor3 = Color3.new(0, 0, 0)
 	self.container.BorderSizePixel = 0
-	self.container.Size = UDim2.fromOffset(W * self.scale, H * self.scale)
+	self.container.Size = UDim2.fromScale(1, 1)
 	self.container.Parent = parent
 
 	self:_createBackend()
@@ -67,9 +67,11 @@ function Renderer:_createBackend()
 
 	-- Fallback: coarse frame grid
 	self.backend = "grid"
-	self.gridCols = 60
-	self.gridRows = 40
+	self.gridCols = 40
+	self.gridRows = 26
 	self.cells = {}
+	self.cellColors = {}
+	self.lastPresent = 0
 	local cellW = W / self.gridCols
 	local cellH = H / self.gridRows
 	for gy = 0, self.gridRows - 1 do
@@ -88,10 +90,12 @@ end
 --- Push the emulator framebuffer to the screen.
 -- `fb` is a native buffer of 240*160*4 RGBA bytes produced directly by the PPU,
 -- so this is a single engine upload with no per-pixel Lua work.
-function Renderer:present(fb: buffer)
+function Renderer:present(fb: buffer, force: boolean?)
 	if self.backend == "editableimage" then
 		self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
 	else
+		if not force and os.clock() - self.lastPresent < 1 / 20 then return end
+		self.lastPresent = os.clock()
 		local cols, rows = self.gridCols, self.gridRows
 		for gy = 0, rows - 1 do
 			for gx = 0, cols - 1 do
@@ -99,7 +103,12 @@ function Renderer:present(fb: buffer)
 				local py = math.floor((gy + 0.5) * H / rows)
 				local o = (py * W + px) * 4
 				local cell = self.cells[gy * cols + gx + 1]
-				cell.BackgroundColor3 = Color3.fromRGB(buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2))
+				local color = buffer.readu32(fb, o)
+				local index = gy * cols + gx + 1
+				if self.cellColors[index] ~= color then
+					self.cellColors[index] = color
+					cell.BackgroundColor3 = Color3.fromRGB(buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2))
+				end
 			end
 		end
 	end
@@ -107,7 +116,7 @@ end
 
 function Renderer:setScale(scale: number)
 	self.currentScale = scale
-	self.container.Size = UDim2.fromOffset(W * scale, H * scale)
+	self.container.Size = UDim2.fromScale(1, 1)
 end
 
 function Renderer:destroy()

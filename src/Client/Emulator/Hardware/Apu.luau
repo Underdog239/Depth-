@@ -305,11 +305,12 @@ end
 
 --- Drain up to `n` samples (default: all).
 function Apu:readSamples(n: number?): { number }
-	n = n or #self.buffer
-	local out = table.create(math.min(n, #self.buffer))
-	for _ = 1, math.min(n, #self.buffer) do
-		table.insert(out, table.remove(self.buffer, 1))
-	end
+	n = math.clamp(math.floor(n or #self.buffer), 0, #self.buffer)
+	local out = table.create(n)
+	table.move(self.buffer, 1, n, 1, out)
+	local remaining = #self.buffer - n
+	table.move(self.buffer, n + 1, #self.buffer, 1, self.buffer)
+	for i = #self.buffer, remaining + 1, -1 do self.buffer[i] = nil end
 	return out
 end
 

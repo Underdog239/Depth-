@@ -1,0 +1,53 @@
+name: Depth health check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 8 * * *'
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned test tools
+        run: |
+          mkdir -p .tools/luau .tools/rojo
+          curl --fail --location --retry 2 https://github.com/luau-lang/luau/releases/download/0.742/luau-ubuntu.zip -o /tmp/luau.zip
+          curl --fail --location --retry 2 https://github.com/rojo-rbx/rojo/releases/download/v7.7.1/rojo-7.7.1-linux-x86_64.zip -o /tmp/rojo.zip
+          unzip -o /tmp/luau.zip -d .tools/luau
+          unzip -o /tmp/rojo.zip -d .tools/rojo
+          chmod +x .tools/luau/* .tools/rojo/rojo
+          echo "$PWD/.tools/luau" >> "$GITHUB_PATH"
+          echo "$PWD/.tools/rojo" >> "$GITHUB_PATH"
+      - name: Scan repository source
+        run: |
+          python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
+          cat health/health.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Core, regression and device checks
+        run: |
+          python3 tools/prepare_tests.py
+          python3 tools/fetch_gba_tests.py
+          luau build/Tests/run.luau build/Tests/regressions.luau build/Tests/client_features.luau build/Tests/gba_suite.luau
+          python3 tools/check_client_adapters.py
+          node tools/check_rom_tool.cjs
+          find src Tests -name '*.luau' -print0 | xargs -0 luau-compile --null
+      - name: Validate client place and installer
+        run: |
+          rojo build default.project.json -o /tmp/Depth-testing.rbxlx
+          python3 tools/check_project.py /tmp/Depth-testing.rbxlx
+          python3 tools/build_installer.py /tmp/Depth-testing.rbxlx /tmp/Depth-install.luau
+          python3 tools/check_installer.py /tmp/Depth-testing.rbxlx /tmp/Depth-install.luau
+          cmp installer/Depth-install.luau /tmp/Depth-install.luau
+      - name: Keep scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: depth-health
+          path: health/

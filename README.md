@@ -3,9 +3,10 @@
 A client-side Game Boy Advance emulator written in Luau for Roblox.
 All runtime work stays on the client; no server scripts, remotes or DataStores
 are used. Diagnostics reset when you leave the session.
-Version **0.2.0-testing** provides a built-in interactive homebrew demo, ROM
-loading, keyboard/gamepad controls, graphics, session snapshots, battery-save
-export/import, and a diagnostics dashboard.
+Version **0.3.0-testing** provides a built-in interactive homebrew demo, ROM
+loading, touch/keyboard/gamepad controls with session remapping, a responsive
+menu, graphics, session snapshots, battery-save export/import, and health reports.
+Device budgets adapt automatically; see [performance limits](docs/PERFORMANCE.md).
 
 ## Start testing
 
@@ -56,23 +57,28 @@ python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.lua
 
 ## Load a game
 
-A Roblox client cannot open a local ROM file. Use the included browser tool:
+A Roblox client cannot open a local ROM file. Download `web/rom-tool.html`
+from GitHub and open the downloaded file in your browser. Files stay local.
 
-1. Open `web/rom-tool.html` locally in a browser.
-2. Select a ROM, generate its module, and download `ROM.luau` into `src/Assets/`.
-3. Rebuild the place or sync through Rojo, then press Play. The ROM loads on join.
+1. Choose a `.gba` file and press **Generate ROM.luau**.
+2. Small files: **Copy base64**, then **Menu → Add a game → Load pasted ROM**.
+3. Larger files: **Download Studio ROM installer**, stop Play and paste that
+   downloaded script into Studio's Command Bar. Press Play to auto-load it.
+4. Rojo users can instead save **Download ROM module** to `src/Assets/ROM.luau`
+   and rebuild/sync. The module path supports up to 32 MiB. The in-game paste
+   box is limited to 200,000 characters. Large ROM conversion/installation may
+   take time; use Rojo if Studio cannot accept a very large paste.
 
-For small homebrew files, paste base64 into the in-game ROM box. The module
-path supports ROMs up to 32 MiB; the paste box is limited to 200,000 characters.
-Generated ROM modules are ignored by Git. No game ROMs or Nintendo BIOS are
-included in the repository or testing place.
+Generated ROMs are ignored by Git. No game ROMs or Nintendo BIOS are bundled.
 
 ## Controls and saves
 
 - `Z` / `X`: A / B; arrow keys: D-pad.
 - `Enter`: Start; `RightShift`: Select; `A` / `C`: L / R.
-- Gamepad face buttons, D-pad, left stick, Start/Select and shoulder buttons
-  are mapped in `src/Shared/Config.luau`.
+- Touch controls appear automatically; use the menu to force them on/off.
+- Gamepad D-pad/stick, A/B, Start/Select and shoulders work by default; **Y**
+  opens the menu. Tap an action in **Menu → Controls** to remap keyboard or
+  controller input. Remaps last for the session. Restore defaults is one tap.
 - **Save state / Load state** capture and restore the current machine within
   the same session and cartridge. Loading another ROM clears the snapshot.
 - **Export save / Import save** transfer battery-save bytes as base64. Copy
@@ -91,6 +97,9 @@ and Python 3.9+. Wally dependencies are empty.
 python3 tools/prepare_tests.py
 luau build/Tests/run.luau
 luau build/Tests/regressions.luau
+luau build/Tests/client_features.luau
+python3 tools/check_client_adapters.py
+node tools/check_rom_tool.cjs
 python3 tools/fetch_gba_tests.py
 luau build/Tests/gba_suite.luau
 ```
@@ -112,7 +121,9 @@ python3 tools/check_project.py Depth-testing.rbxlx
 This is a build for testing, with specific automated coverage rather than a
 claim of general commercial-game compatibility.
 
-- Audio samples and levels are available for inspection; **playback is silent**.
+- **Full GBA audio is unavailable.** The optional uploaded-waveform adapter
+  approximates two square channels. Without a permitted Roblox audio asset,
+  playback is silent. [Audio setup and limits](docs/AUDIO.md).
 - BIOS high-level emulation is partial. Unsupported SWIs stop emulation with
   their number and PC in the error message.
 - Hardware cycle timing, sound accuracy and advanced graphics need broader
@@ -126,7 +137,7 @@ claim of general commercial-game compatibility.
 - Roblox Studio execution must be checked in Studio; standalone tests and a
   successful Rojo build do not validate Roblox rendering or input APIs.
 
-See [architecture](docs/ARCHITECTURE.md), [audio](docs/AUDIO.md),
+See [background health/GitHub reports](docs/HEALTH.md), [architecture](docs/ARCHITECTURE.md), [audio](docs/AUDIO.md),
 [performance](docs/PERFORMANCE.md), and [testing](docs/TESTING.md).
 
 ## Licence

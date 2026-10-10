@@ -1,68 +1,35 @@
 --!strict
---[[ Optimize/Adaptive.luau
-
- Keeps the emulator responsive on a real Roblox client. It watches measured FPS
- and frame time and decides, per frame, whether to:
-
-   * present every produced frame (native)
-   * skip presentation but keep emulating (catch-up)
-   * lower render scale (fewer pixels to upload)
-   * reduce emulated cycles per frame (slow-motion instead of freezing)
-
- All thresholds come from Config so behaviour is tunable in one place.
- ]]
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Config = require(ReplicatedStorage.Shared.Config)
-
+-- Bound work in wall-clock milliseconds. Screen scaling does not reduce CPU work.
 local Adaptive = {}
 Adaptive.__index = Adaptive
-
-function Adaptive.new()
-	return setmetatable({
-		mode = "native",
-		fpsSamples = {},
-		frameSkip = 0,
-		currentScale = Config.RENDER.scale,
-		slowFrames = 0,
-		fastFrames = 0,
-	}, Adaptive) :: any
+function Adaptive.new(touch: boolean?)
+	local maximum = touch and 4 or 8
+	return setmetatable({ mode = "balanced", maximum = maximum, sliceMs = maximum,
+		slowFrames = 0, fastFrames = 0, averageMs = 16.7, presentEvery = 1 }, Adaptive)
 end
-
+function Adaptive:setLowPower(enabled: boolean)
+	self.mode = enabled and "battery" or "balanced"
+	self.sliceMs = math.min(self.sliceMs, enabled and 3 or self.maximum)
+	self.presentEvery = enabled and 2 or 1
+end
 function Adaptive:sample(frameMs: number)
-	table.insert(self.fpsSamples, frameMs)
-	if #self.fpsSamples > 45 then table.remove(self.fpsSamples, 1) end
-	local sum = 0
-	for _, v in self.fpsSamples do sum += v end
-	local avg = sum / #self.fpsSamples
-	local fps = avg > 0 and 1000 / avg or 0
-
-	if fps < Config.RENDER.minFps then
-		self.slowFrames += 1
-		self.fastFrames = 0
-	elseif fps > Config.RENDER.targetFps * 0.95 then
-		self.fastFrames += 1
+	self.averageMs += (math.clamp(frameMs, 1, 250) - self.averageMs) * 0.05
+	if self.averageMs > 35 then
+		self.slowFrames += 1; self.fastFrames = 0
+	elseif self.averageMs < 20 then
+		self.fastFrames += 1; self.slowFrames = 0
+	else self.slowFrames, self.fastFrames = 0, 0 end
+	if self.slowFrames >= 20 then
+		self.sliceMs = math.max(2, self.sliceMs - 1)
+		self.presentEvery = 2
 		self.slowFrames = 0
-	end
-
-	-- React only after a sustained trend, to avoid oscillation.
-	if self.slowFrames > 30 then
-		self.mode = "catchup"
-		if self.currentScale > 1 and Config.RENDER.autoScale then
-			self.currentScale -= 1
-			self.slowFrames = 0
-		end
-	elseif self.fastFrames > 120 then
-		self.mode = "native"
+	elseif self.fastFrames >= 180 then
+		self.sliceMs = math.min(self.mode == "battery" and 3 or self.maximum, self.sliceMs + 1)
+		self.presentEvery = self.mode == "battery" and 2 or 1
 		self.fastFrames = 0
 	end
-	return self.mode
 end
-
 function Adaptive:shouldPresent(frameIndex: number): boolean
-	if self.mode == "native" then return true end
-	-- catch-up: present every 2nd frame to buy back time
-	return frameIndex % 2 == 0
+	return frameIndex % self.presentEvery == 0
 end
-
 return Adaptive
