@@ -113,6 +113,49 @@ gba.cpu:swi(0x0C)
 check("CpuFastSet always copies words", bus:read32(0x0200031C) == 8)
 check("unsupported BIOS call reports failure", not pcall(function() gba.cpu:swi(0xFF) end))
 
+-- FireRed uses affine BIOS calls for its intro sprites and backgrounds.
+-- Hand-authored fixtures exercise struct alignment, fixed-point signs and
+-- destination strides without a commercial ROM or Nintendo BIOS.
+local function bgSource(addr, tx, ty, x, y, sx, sy, angle)
+ bus:write32(addr, tx % 0x100000000); bus:write32(addr + 4, ty % 0x100000000)
+ for i, v in {x, y, sx, sy, angle, 0xDEAD} do bus:write16(addr + 6 + i * 2, v % 0x10000) end
+end
+local function objSource(addr, sx, sy, angle)
+ for i, v in {sx, sy, angle, 0xBEEF} do bus:write16(addr + (i - 1) * 2, v % 0x10000) end
+end
+bgSource(0x02001000, 10 * 256, -20 * 256, 3, -4, 256, 512, 0)
+bgSource(0x02001014, -256, 512, -2, 3, 256, 512, 0x40FF)
+gba.cpu.regs[1], gba.cpu.regs[2], gba.cpu.regs[3] = 0x02001000, 0x02002000, 2
+gba.cpu.regs[5], gba.cpu.regs[13] = 0x12345678, 0x87654321
+gba.cpu:swi(0x0E)
+check("BgAffineSet identity with unequal scales", bus:read32(0x02002000) == 256 and bus:read32(0x02002004) == 0x02000000)
+check("BgAffineSet signed origin translation", bus:read32(0x02002008) == 7 * 256 and bus:read32(0x0200200C) == (-12 * 256) % 0x100000000)
+check("BgAffineSet advances padded source and destination", bus:read32(0x02002010) == 0xFF000000 and bus:read32(0x02002014) == 512)
+check("BgAffineSet quarter turn ignores low angle byte", bus:read32(0x02002018) == 512 and bus:read32(0x0200201C) == 1536)
+check("affine SWIs preserve callee registers", gba.cpu.regs[5] == 0x12345678 and gba.cpu.regs[13] == 0x87654321)
+objSource(0x02001000, 256, 512, 0x2000)
+objSource(0x02001008, -256, 128, 0xC000)
+for i = 0, 31 do bus:write16(0x07000000 + i * 2, 0xA55A) end
+gba.cpu.regs[1], gba.cpu.regs[2], gba.cpu.regs[3], gba.cpu.regs[4] = 0x02001000, 0x07000006, 2, 8
+gba.cpu:swi(0x0F)
+check("ObjAffineSet diagonal quantization", bus:read16(0x07000006) == 181 and bus:read16(0x0700000E) == 0xFF4B and bus:read16(0x07000016) == 362 and bus:read16(0x0700001E) == 362)
+check("ObjAffineSet advances source and OAM stride", bus:read16(0x07000026) == 0 and bus:read16(0x0700002E) == 0xFF00 and bus:read16(0x07000036) == 0xFF80 and bus:read16(0x0700003E) == 0)
+check("ObjAffineSet leaves sprite attributes intact", bus:read16(0x07000000) == 0xA55A and bus:read16(0x0700000C) == 0xA55A and bus:read16(0x0700003C) == 0xA55A)
+objSource(0x02001000, -1, -1, 0x0100)
+gba.cpu.regs[2], gba.cpu.regs[3], gba.cpu.regs[4] = 0x02002000, 1, 2
+gba.cpu:swi(0x0F)
+check("ObjAffineSet arithmetic shift before sine negation", bus:read16(0x02002000) == 0xFFFF and bus:read16(0x02002002) == 1 and bus:read16(0x02002004) == 0xFFFF and bus:read16(0x02002006) == 0xFFFF)
+gba.cpu.regs[3] = 0
+bus:write32(0x02002000, 0xDEADBEEF)
+gba.cpu:swi(0x0E); gba.cpu:swi(0x0F)
+check("affine zero count leaves destination unchanged", bus:read32(0x02002000) == 0xDEADBEEF)
+gba.cpu.regs[3] = 0x4001
+check("affine oversized count fails before writes", not pcall(function() gba.cpu:swi(0x0F) end) and bus:read32(0x02002000) == 0xDEADBEEF)
+bgSource(0x02001000, 2560, 5120, 3, 4, 256, 256, 0)
+gba.cpu.regs[1], gba.cpu.regs[2], gba.cpu.regs[3] = 0x02001000, 0x02001000, 1
+gba.cpu:swi(0x0E)
+check("BgAffineSet reads source before overlapping output", bus:read32(0x02001008) == 1792 and bus:read32(0x0200100C) == 4096)
+
 -- IRQ trampoline executes an ordinary game's IWRAM handler and returns.
 gba:reset()
 local handler = {0xE59F0008, 0xE3A01001, 0xE1C010B0, 0xE12FFF1E, 0x04000202}

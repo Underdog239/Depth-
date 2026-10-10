@@ -110,8 +110,9 @@ The real-BIOS suite and NES/unsafe demos are not conformance gates.
 
 Regression checks cover DMA address/width/repeat behavior, EEPROM serial DMA,
 timer cascade/reload, sound FIFO routing/refill, IO lanes, PPU register routing,
-BIOS decompression and IRQ return, frame slicing, deterministic snapshots,
-reset, demo input, invalid data and local diagnostics severity/deduplication.
+BIOS decompression, background/sprite affine transforms and IRQ return, frame
+slicing, deterministic snapshots, reset, demo input, invalid data and local
+diagnostics severity/deduplication.
 
 ## Reporting a failure
 
@@ -146,3 +147,9 @@ Saves → Health report. Import success alone does not establish compatibility.
 Native image upload failures switch to the grid renderer automatically; the
 same framebuffer is presented immediately. The grid starts black and resets
 when changing/restarting games. Real Roblox renderer acceptance is still manual.
+
+FireRed's public source uses BgAffineSet/ObjAffineSet, including intro sprite
+scaling. These BIOS calls are now supported and tested with synthetic fixtures
+for rotation, signed scales, origins, packed/OAM strides and overlapping output.
+Actual FireRed startup and gameplay have not been verified with a game ROM;
+this compatibility fix alone does not establish that a white-screen stall is resolved.
