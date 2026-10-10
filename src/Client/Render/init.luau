@@ -28,7 +28,6 @@ function Renderer.new(parent: Instance, options: any?)
 	local self = setmetatable({}, Renderer)
 	self.scale = options.scale or Config.RENDER.scale
 	self.backend = nil
-	self.pixelBuffer = buffer.create(W * H * 4)
 	self.fpsSamples = {}
 	self.currentScale = self.scale
 
@@ -91,21 +90,13 @@ function Renderer:_createBackend()
 	Logger.warn("Renderer backend: grid fallback (EditableImage unavailable)")
 end
 
---- Push the emulator framebuffer (RGBA byte array) to the screen.
-function Renderer:present(fb: { number })
+--- Push the emulator framebuffer to the screen.
+-- `fb` is a native buffer of 240*160*4 RGBA bytes produced directly by the PPU,
+-- so this is a single engine upload with no per-pixel Lua work.
+function Renderer:present(fb: buffer)
 	if self.backend == "editableimage" then
-		local buf = self.pixelBuffer
-		local n = W * H
-		for i = 0, n - 1 do
-			local o = i * 4
-			local r = fb[o + 1] or 0
-			local g = fb[o + 2] or 0
-			local b = fb[o + 3] or 0
-			local a = fb[o + 4] or 255
-			buffer.writeu32(buf, o, bit32.bor(r, bit32.lshift(g, 8), bit32.lshift(b, 16), bit32.lshift(a, 24)))
-		end
 		pcall(function()
-			self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), buf)
+			self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
 		end)
 	else
 		local cols, rows = self.gridCols, self.gridRows
@@ -115,7 +106,7 @@ function Renderer:present(fb: { number })
 				local py = math.floor((gy + 0.5) * H / rows)
 				local o = (py * W + px) * 4
 				local cell = self.cells[gy * cols + gx + 1]
-				cell.BackgroundColor3 = Color3.fromRGB(fb[o + 1] or 0, fb[o + 2] or 0, fb[o + 3] or 0)
+				cell.BackgroundColor3 = Color3.fromRGB(buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2))
 			end
 		end
 	end

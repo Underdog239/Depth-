@@ -1,20 +1,24 @@
 --!strict
 --[[ Emulator/Cart/Cartridge.luau
 
- Parses a real GBA ROM header (offset 0x0000..0x00BF) and exposes the ROM as a
- byte array plus derived metadata (title, game code, save type, checksum).
+ Parses a real GBA ROM header and exposes the ROM as a native Luau `buffer`.
 
- Save-type detection uses the same heuristic table most emulators use, driven
- by the (gameCode, makerCode, version) triple. Backups that match a known entry
- get their type; everything else defaults to SRAM (safe fallback) unless the
- header says otherwise.
+ Why a buffer and not a Lua table: a byte table costs roughly 16 bytes per
+ entry in TValue overhead, so a 16 MiB ROM would occupy ~250 MiB and generate
+ heavy GC pressure. A buffer is exactly 16 MiB and lives outside the GC-managed
+ table graph.
+
+ IMPORTANT: buffer reads are bounds checked by the runtime and *throw* when out
+ of range, where the old table form returned nil. The CPU can legitimately run
+ off the end of a ROM (bad branch, PC past the image), so every accessor here
+ clamps and returns 0 instead of raising.
  ]]
 
 local Util = require(game:GetService("ReplicatedStorage").Shared.Util)
 local SaveBackend = require(script.Parent.Parent.Save.SaveBackend)
 
 export type Cartridge = {
-	rom: { number },
+	rom: buffer,
 	size: number,
 	info: any,
 	read8: (self: Cartridge, offset: number) -> number,
@@ -46,70 +50,91 @@ local SAVE_TABLE: { [string]: string } = {
 }
 
 local function detectSaveType(gameCode: string, fallback: string): string
-	local entry = SAVE_TABLE[gameCode]
-	if entry then return entry end
-	return fallback
+	return SAVE_TABLE[gameCode] or fallback
 end
 
---- Parse the 0x00..0xBF header. Returns a RomInfo table (never errors).
-function Cartridge.parseHeader(rom: { number }): any
-	local function str(off: number, len: number): string
-		local bytes = table.create(len)
-		for i = 1, len do bytes[i] = rom[off + i] or 0 end
-		-- strip trailing NULs and spaces
-		return (Util.bytesToString(bytes)):gsub("[%z\s]+$", "")
+--- Parse the 0x00..0xBF header from a ROM buffer. Never raises.
+function Cartridge.parseHeader(rom: buffer): any
+	local len = buffer.len(rom)
+
+	local function u8(off: number): number
+		if off < 0 or off >= len then return 0 end
+		return buffer.readu8(rom, off)
 	end
 
-	local fixed = rom[0xB2 + 1] or 0 -- 0x96 expected at 0xB2 in fixed-value region
-	local entry = Util.readLE(rom, 1, 4)
+	local function str(off: number, count: number): string
+		local bytes = table.create(count)
+		for i = 1, count do bytes[i] = u8(off + i - 1) end
+		return (Util.bytesToString(bytes)):gsub("[%z%s]+$", "")
+	end
+
+	local entry = u8(0) + u8(1) * 0x100 + u8(2) * 0x10000 + u8(3) * 0x1000000
 	local checksum = 0
 	for i = 0xA0, 0xBC do
-		checksum = (checksum - (rom[i + 1] or 0)) % 256
+		checksum = (checksum - u8(i)) % 256
 	end
-	local hdrChecksum = rom[0xBD + 1] or 0
-	local sizeIndex = rom[0xBE + 1] or 0
-	local romSize = 0x8000 * (2 ^ sizeIndex)
+	local hdrChecksum = u8(0xBD)
+	local sizeIndex = u8(0xBE)
+	local gameCode = str(0xAC, 4)
 
 	return {
 		title = str(0xA0, 12),
-		gameCode = str(0xAC, 4),
+		gameCode = gameCode,
 		makerCode = str(0xB0, 2),
-		version = rom[0xBC + 1] or 0,
+		version = u8(0xBC),
 		entryPoint = entry,
 		headerChecksum = hdrChecksum,
 		headerChecksumOk = checksum == hdrChecksum,
-		firmwareFlag = fixed,
-		romSizeBytes = romSize,
+		firmwareFlag = u8(0xB2),
+		romSizeBytes = 0x8000 * (2 ^ sizeIndex),
 		sizeIndex = sizeIndex,
-		saveType = detectSaveType(str(0xAC, 4), SAVE_SRAM),
+		saveType = detectSaveType(gameCode, SAVE_SRAM),
 	}
 end
 
---- Create a cartridge from raw ROM bytes.
-function Cartridge.new(romBytes: { number }): Cartridge
-	local info = Cartridge.parseHeader(romBytes)
+--- Create a cartridge. Accepts a byte array (legacy paths / tests) or a buffer.
+function Cartridge.new(romBytes: any): Cartridge
+	local rom: buffer
+	if Util.isBuffer(romBytes) then
+		rom = romBytes
+	else
+		rom = Util.bytesToBuffer(romBytes)
+	end
+	local info = Cartridge.parseHeader(rom)
 	return setmetatable({
-		rom = romBytes,
-		size = #romBytes,
+		rom = rom,
+		size = buffer.len(rom),
 		info = info,
 		-- Battery-backed save chip: SRAM, Flash or EEPROM (or a null backend).
-		backend = SaveBackend.new(info.saveType, #romBytes),
+		backend = SaveBackend.new(info.saveType, buffer.len(rom)),
 	}, Cartridge) :: any
 end
 
+-- Accessors ----------------------------------------------------------------
+-- All three clamp to the ROM and return 0 past the end. Unaligned reads are
+-- natively supported by buffers, so no byte shifting is required in the common
+-- case; the byte assembly path only exists for the final partial word.
+
 function Cartridge:read8(offset: number): number
-	return self.rom[offset + 1] or 0
+	if offset < 0 or offset >= self.size then return 0 end
+	return buffer.readu8(self.rom, offset)
 end
 
 function Cartridge:read16(offset: number): number
-	return (self.rom[offset + 1] or 0) + (self.rom[offset + 2] or 0) * 0x100
+	if offset >= 0 and offset + 2 <= self.size then
+		return buffer.readu16(self.rom, offset)
+	end
+	return self:read8(offset) + self:read8(offset + 1) * 0x100
 end
 
 function Cartridge:read32(offset: number): number
-	return (self.rom[offset + 1] or 0)
-		+ (self.rom[offset + 2] or 0) * 0x100
-		+ (self.rom[offset + 3] or 0) * 0x10000
-		+ (self.rom[offset + 4] or 0) * 0x1000000
+	if offset >= 0 and offset + 4 <= self.size then
+		return buffer.readu32(self.rom, offset)
+	end
+	return self:read8(offset)
+		+ self:read8(offset + 1) * 0x100
+		+ self:read8(offset + 2) * 0x10000
+		+ self:read8(offset + 3) * 0x1000000
 end
 
 function Cartridge:saveBytes(): { number }

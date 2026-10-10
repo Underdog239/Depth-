@@ -39,25 +39,54 @@ function Base64.encode(bytes: { number }): string
 	return table.concat(out)
 end
 
-function Base64.decode(text: string): { number }
-	local out: { number } = {}
+--- Decode base64 straight into a native buffer (the fast path used for ROMs).
+-- Groups are written as a single 32-bit store where there is room, which is
+-- three times fewer stores than a byte-at-a-time loop.
+function Base64.decodeToBuffer(text: string): buffer
 	local n = #text
+	local padding = 0
+	if n >= 1 and string.byte(text, n) == 61 then padding += 1 end
+	if n >= 2 and string.byte(text, n - 1) == 61 then padding += 1 end
+	local size = (n // 4) * 3 - padding
+	if size < 0 then size = 0 end
+
+	local buf = buffer.create(size)
 	local i = 1
-	while i <= n do
+	local o = 0
+	while i + 3 <= n do
 		local c1 = DECODE[string.byte(text, i)]
-		local c2 = DECODE[string.byte(text, i + 1) or 0]
-		local c3 = DECODE[string.byte(text, i + 2) or 0]
-		local c4 = DECODE[string.byte(text, i + 3) or 0]
-		if c1 == nil then break end
-		out[#out + 1] = c1 * 4 + (c2 or 0) // 16
+		local c2 = DECODE[string.byte(text, i + 1)]
+		local c3 = DECODE[string.byte(text, i + 2)]
+		local c4 = DECODE[string.byte(text, i + 3)]
+		if c1 == nil or c2 == nil then break end
+		local b0 = c1 * 4 + c2 // 16
+		local b1 = 0
+		local b2 = 0
 		if c3 ~= nil then
-			out[#out + 1] = ((c2 or 0) % 16) * 16 + c3 // 4
+			b1 = (c2 % 16) * 16 + c3 // 4
+			if c4 ~= nil then b2 = (c3 % 4) * 64 + c4 end
 		end
-		if c4 ~= nil then
-			out[#out + 1] = (c3 % 4) * 64 + c4
+		if o + 4 <= size then
+			-- one store covers three payload bytes; the 4th is rewritten by the
+			-- next group, so it never escapes into the result.
+			buffer.writeu32(buf, o, b0 + b1 * 0x100 + b2 * 0x10000)
+		else
+			if o < size then buffer.writeu8(buf, o, b0) end
+			if c3 ~= nil and o + 1 < size then buffer.writeu8(buf, o + 1, b1) end
+			if c4 ~= nil and o + 2 < size then buffer.writeu8(buf, o + 2, b2) end
 		end
+		o += 3
 		i += 4
 	end
+	return buf
+end
+
+--- Decode base64 into a 1-based byte array (convenience / tests).
+function Base64.decode(text: string): { number }
+	local buf = Base64.decodeToBuffer(text)
+	local n = buffer.len(buf)
+	local out = table.create(n, 0)
+	for i = 0, n - 1 do out[i + 1] = buffer.readu8(buf, i) end
 	return out
 end
 

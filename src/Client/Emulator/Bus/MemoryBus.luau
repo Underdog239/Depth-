@@ -82,6 +82,13 @@ end
 
 function MemoryBus:read16(addr: number): number
 	local top = addr // 0x1000000
+	-- ROM is the hottest region by far (every THUMB fetch), so it gets a direct
+	-- path instead of two full region dispatches.
+	if top >= 0x08 and top <= 0x0D then
+		local cart = self.cart
+		if cart then return cart:read16(bit32.band(addr, 0x1FFFFFF)) end
+		return 0
+	end
 	if top == 0x04 then return self:readIO16(bit32.band(addr, 0x3FE)) end
 	local a0 = self:read8(addr)
 	local a1 = self:read8(addr + 1)
@@ -90,6 +97,11 @@ end
 
 function MemoryBus:read32(addr: number): number
 	local top = addr // 0x1000000
+	if top >= 0x08 and top <= 0x0D then
+		local cart = self.cart
+		if cart then return cart:read32(bit32.band(addr, 0x1FFFFFF)) end
+		return 0
+	end
 	if top == 0x04 then
 		-- Most IO registers are 16-bit; upper half reads as zero on the GBA.
 		return self:readIO16(bit32.band(addr, 0x3FE))
@@ -152,6 +164,7 @@ end
 
 function MemoryBus:write32(addr: number, value: number)
 	local top = addr // 0x1000000
+	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
 		self:writeIO16(bit32.band(addr, 0x3FE), bit32.band(value, 0xFFFF))
 		return

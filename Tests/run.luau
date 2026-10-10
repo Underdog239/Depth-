@@ -159,11 +159,12 @@ do
 	ppu:_renderScanline(0)
 	ppu:_blitLine(0)
 	local fb = ppu.framebuffer
-	check("mode3 pixel is red", fb[1] == 255 and fb[2] == 0 and fb[3] == 0, string.format("%d,%d,%d", fb[1], fb[2], fb[3]))
-	check("alpha opaque", fb[4] == 255)
-	local fb2 = ppu.framebuffer
+	check("framebuffer is a native buffer", type(fb) == "buffer", type(fb))
+	check("mode3 pixel is red", buffer.readu8(fb, 0) == 255 and buffer.readu8(fb, 1) == 0 and buffer.readu8(fb, 2) == 0,
+		string.format("%d,%d,%d", buffer.readu8(fb, 0), buffer.readu8(fb, 1), buffer.readu8(fb, 2)))
+	check("alpha opaque", buffer.readu8(fb, 3) == 255)
 	local o = (10 * 240 + 5) * 4
-	check("backdrop elsewhere", fb2[o + 1] == 0 and fb2[o + 2] == 0 and fb2[o + 3] == 0)
+	check("backdrop elsewhere", buffer.readu8(fb, o) == 0 and buffer.readu8(fb, o + 1) == 0 and buffer.readu8(fb, o + 2) == 0)
 end
 
 -- Cartridge ------------------------------------------------------------------
@@ -223,8 +224,8 @@ do
 	for _ = 1, 3 do gba:runFrame() end
 	local fb = gba:framebuffer()
 	local o = (80 * 240 + 100) * 4
-	check("homebrew screen filled", fb[o + 1] == 24 and fb[o + 2] == 205 and fb[o + 3] == 90,
-		string.format("%d,%d,%d", fb[o + 1], fb[o + 2], fb[o + 3]))
+	check("homebrew screen filled", buffer.readu8(fb, o) == 24 and buffer.readu8(fb, o + 1) == 205 and buffer.readu8(fb, o + 2) == 90,
+		string.format("%d,%d,%d", buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2)))
 	check("cpu parked in the idle loop", gba.cpu.regs[16] == 0x080000E4, string.format("0x%08X", gba.cpu.regs[16]))
 end
 
@@ -326,6 +327,61 @@ do
 	apu:write16(0x082, 0x0300)
 	apu:tick(2000)
 	check("fifo A drains", #apu.fifoA < 2, #apu.fifoA)
+end
+
+-- Native buffer storage -------------------------------------------------------
+section("Native buffer storage (ROM + framebuffer)")
+do
+	local function gcKb() return collectgarbage("count") end
+
+	-- 16 MiB ROM held as a native buffer
+	local SIZE = 16 * 1024 * 1024
+	local rom = buffer.create(SIZE)
+	buffer.writeu32(rom, 0, 0xEAFFFFFE)   -- ARM 'B .' at the entry point
+	buffer.writeu8(rom, 0xB2, 0x96)       -- fixed header byte
+	buffer.writeu8(rom, SIZE - 1, 0xAB)   -- marker at the very last byte
+
+	local before = gcKb()
+	local t0 = os.clock()
+	local gba = GBA.new({ rom = rom })
+	local loadMs = (os.clock() - t0) * 1000
+	local romKb = gcKb() - before
+
+	check("16 MiB ROM accepted as a buffer", gba.cart.size == SIZE, gba.cart.size)
+	check("header parsed from buffer", gba.cart.info.firmwareFlag == 0x96)
+	check("read8 at final byte", gba.cart:read8(SIZE - 1) == 0xAB, gba.cart:read8(SIZE - 1))
+	check("read32 of final word", gba.cart:read32(SIZE - 4) == 0xAB000000, string.format("0x%X", gba.cart:read32(SIZE - 4)))
+	check("read32 exactly at end is 0", gba.cart:read32(SIZE) == 0, gba.cart:read32(SIZE))
+	check("read32 far past end does not raise", pcall(function() return gba.cart:read32(SIZE + 0x100000) end))
+	check("read16 past end does not raise", pcall(function() return gba.cart:read16(SIZE - 1) end))
+	check("unaligned read32 is correct", (function()
+		local buf = buffer.create(8)
+		buffer.writeu8(buf, 0, 0x11); buffer.writeu8(buf, 1, 0x22)
+		buffer.writeu8(buf, 2, 0x33); buffer.writeu8(buf, 3, 0x44)
+		buffer.writeu8(buf, 4, 0x55)
+		return buffer.readu32(buf, 1) == 0x55443322
+	end)())
+
+	local f0 = os.clock()
+	for _ = 1, 10 do gba:runFrame() end
+	local frameMs = (os.clock() - f0) / 10 * 1000
+	check("frames still run with 16 MiB ROM", gba.frames == 10, gba.frames)
+
+	-- Contrast: the same bytes as a plain Lua array (4 MiB, to stay within the
+	-- sandbox) shows the per-entry TValue overhead the buffer avoids.
+	local TBL = 4 * 1024 * 1024
+	local b1 = gcKb()
+	local tbl = table.create(TBL, 0)
+	local tableKb = gcKb() - b1
+	tbl = nil
+	collectgarbage()
+	local bytesPerEntry = (tableKb * 1024) / TBL
+	check("lua table costs far more per byte", bytesPerEntry > 8, string.format("%.1f bytes/entry", bytesPerEntry))
+
+	local bufKb = (buffer.len(rom) / 1024)
+	print(string.format("  info  16 MiB buffer: +%.0f KiB accounted, load %.0f ms, frame %.2f ms", romKb, loadMs, frameMs))
+	print(string.format("  info  buffer bytes accounted: %d KiB (exactly the payload)", bufKb))
+	print(string.format("  info  4 MiB lua array: +%.0f KiB (%.1f bytes/entry) vs 4 MiB buffer = 4096 KiB", tableKb, bytesPerEntry))
 end
 
 print(string.format("\n%d checks, %d failures", total, failures))

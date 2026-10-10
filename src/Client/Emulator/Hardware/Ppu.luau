@@ -30,7 +30,7 @@ function Ppu.new(bus: any, interrupts: any)
 		winh = { 0, 0 }, winv = { 0, 0 }, winin = 0, winout = 0,
 		mosaic = 0, bldcnt = 0, bldalpha = 0, bldy = 0,
 		dot = 0, line = 0, frameComplete = false, frame = 0,
-		framebuffer = table.create(W * H * 4, 0),
+		framebuffer = buffer.create(W * H * 4),
 		scanline = table.create(W, 0),
 		scanPrio = table.create(W, 4),
 		scanLayer = table.create(W, 0),
@@ -213,17 +213,26 @@ local function expand5(v: number): number
 	return bit32.band(v, 0x1F) * 255 // 31
 end
 
+-- 15-bit RGB -> packed RGBA8, precomputed once. The mapping is a pure function
+-- of the colour value, so palette edits never invalidate it.
+local RGBA_LUT = table.create(0x8000)
+for c = 0, 0x7FFF do
+	local r = expand5(c)
+	local g = expand5(c // 0x20)
+	local b = expand5(c // 0x400)
+	RGBA_LUT[c + 1] = r + g * 0x100 + b * 0x10000 + 0xFF000000
+end
+Ppu.RGBA_LUT = RGBA_LUT
+
+--- Write one composed scanline straight into the RGBA upload buffer.
+-- One 32-bit store per pixel: no intermediate table, no per-channel packing at
+-- frame time.
 function Ppu:_blitLine(y: number)
 	local fb = self.framebuffer
 	local line = self.scanline
 	local base = y * W * 4
 	for x = 1, W do
-		local c = line[x]
-		local o = base + (x - 1) * 4
-		fb[o + 1] = expand5(c)
-		fb[o + 2] = expand5(c // 0x20)
-		fb[o + 3] = expand5(c // 0x400)
-		fb[o + 4] = 255
+		buffer.writeu32(fb, base + (x - 1) * 4, RGBA_LUT[line[x] + 1] or 0xFF000000)
 	end
 end
 

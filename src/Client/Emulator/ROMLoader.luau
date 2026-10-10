@@ -48,7 +48,7 @@ local function fromFolder(folder: Instance): ({ number }?, string?)
 	table.sort(parts, function(a, b) return a[1] < b[1] end)
 	local joined = table.create(#parts)
 	for i, p in parts do joined[i] = p[2] end
-	return Base64.decode(table.concat(joined)), "GBAROM (chunk folder)"
+	return Base64.decodeToBuffer(table.concat(joined)), "GBAROM (chunk folder)"
 end
 
 --- Locate an embedded ROM. Returns (bytes, sourceName) or (nil, reason).
@@ -69,7 +69,7 @@ function ROMLoader.find(): ({ number }?, string?)
 	if holder then
 		local bytes, name
 		if holder:IsA("StringValue") then
-			bytes, name = Base64.decode(holder.Value), "GBAROM (StringValue)"
+			bytes, name = Base64.decodeToBuffer(holder.Value), "GBAROM (StringValue)"
 		elseif holder:IsA("Folder") then
 			bytes, name = fromFolder(holder)
 		end

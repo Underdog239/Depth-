@@ -54,3 +54,58 @@ Simple 2D titles (puzzle, early platformers) are the best candidates. Heavy 3D
 or mode-7 style titles will run below full speed; the adaptive layer keeps them
 playable rather than frozen. Treat the numbers in the status line as ground
 truth for your hardware, not the ones in any README.
+
+## Measured numbers (v1.0, headless Luau harness)
+
+These come from `Tests/run.luau` and a standalone benchmark, run against a
+16 MiB ROM. They are real measurements, not estimates.
+
+| metric | value |
+|---|---|
+| 16 MiB ROM as a `buffer` | 16,384 KiB - exactly the payload |
+| 16 MiB ROM load (header parse + save backend) | ~4 ms, +128 KiB of Lua structures |
+| 4 MiB ROM as a Lua array | 65,536 KiB (16.0 bytes per entry) |
+| buffer vs array, same bytes | **16x smaller** |
+| PPU render, full 160 scanlines, mode 0 | 3.5 ms/frame |
+| PPU blit alone (38,400 pixels) | ~1.2 ms/frame (0.03 us per pixel) |
+| CPU interpreter | ~70 ms/frame, **1.24 M instructions/sec** |
+
+### The bottleneck is the CPU, not the renderer
+
+The render pipeline was collapsed from three passes (PPU -> table -> 38,400
+iteration Lua loop -> buffer) to two (PPU -> buffer -> GPU upload). That removed
+roughly 150,000 operations per frame, and it was the right cleanup - but it
+saved only a couple of milliseconds, because rendering was never the constraint.
+
+The interpreter executes about **1.24 M instructions per second**. A GBA needs
+roughly 6-11 M instructions per second for full speed, so the current core runs
+at roughly 10-20% of real time. For a title that executes 90,000 instructions
+per frame (a trivial loop), a frame costs ~73 ms - about 14 FPS. Simpler titles
+with fewer instructions per frame do better; heavier ones worse.
+
+### Where the remaining cost is
+
+Per emulated instruction the core still pays for:
+
+* method calls (`self:reg`, `self:setReg`, `self:readWord`, `bus:read32`);
+* a region dispatch on every memory access;
+* `bus:tick` fanning out to three components every instruction.
+
+Optimisations already applied: direct ROM paths in `read16`/`read32` (the
+hottest region - every fetch), inlined interrupt polling in `CPU:step`, and
+`bit32.band` instead of `%` for address masking. Together these cut frame time
+from 110 ms to 73 ms (~34%).
+
+### What would actually close the gap
+
+The remaining work is interpreter engineering, not rendering:
+
+1. Cache the decoded register file and the memory-region tag in locals.
+2. Batch `bus:tick` instead of ticking three components per instruction.
+3. A decoded-instruction cache or basic-block cache keyed on PC.
+4. Only then consider parallel Luau (`task.desynchronize` inside an `Actor`) -
+   and note the CPU must stay on the main thread, so the win there is limited.
+
+Until those land, treat 30+ FPS as a target for light titles, and use the
+adaptive layer plus `Config.CORE.maxCyclesPerFrame` to keep heavier ones
+playable rather than frozen.

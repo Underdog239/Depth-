@@ -257,27 +257,27 @@ CPU._setNZ = setNZ
 -- Memory access helpers -----------------------------------------------------
 
 function CPU:readWord(addr: number): number
-	return self.bus:read32(addr % 0x10000000)
+	return self.bus:read32(bit32.band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeWord(addr: number, value: number)
-	self.bus:write32(addr % 0x10000000, value)
+	self.bus:write32(bit32.band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readHalf(addr: number): number
-	return self.bus:read16(addr % 0x10000000)
+	return self.bus:read16(bit32.band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeHalf(addr: number, value: number)
-	self.bus:write16(addr % 0x10000000, value)
+	self.bus:write16(bit32.band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readByte(addr: number): number
-	return self.bus:read8(addr % 0x10000000)
+	return self.bus:read8(bit32.band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeByte(addr: number, value: number)
-	self.bus:write8(addr % 0x10000000, value)
+	self.bus:write8(bit32.band(addr, 0xFFFFFFF), value)
 end
 
 --- Read a register; R15 reads as PC + pipeline offset.
@@ -977,7 +977,14 @@ end
 
 --- Fetch, decode and execute a single instruction. Returns cycles consumed.
 function CPU:step(): number
-	if self:checkIRQ() then return 3 end
+	-- Inlined interrupt poll: this runs on every single instruction, so it
+	-- avoids two method calls on the hot path.
+	if not self.irqDisable then
+		local ints = self.bus.interrupts
+		if ints and ints.ime ~= 0 and bit32.band(ints.ie, ints.if_) ~= 0 then
+			self:checkIRQ()
+		end
+	end
 	local pc = self.regs[16]
 	if self.thumb then
 		local op = self.bus:read16(pc)

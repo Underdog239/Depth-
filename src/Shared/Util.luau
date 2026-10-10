@@ -67,6 +67,34 @@ function Util.bytesToString(arr: {number}, off: number?, len: number?): string
 	return table.concat(chunks)
 end
 
+-- Native buffer interop ------------------------------------------------------
+-- The emulator keeps large byte stores (ROM, framebuffer) in Luau `buffer`s.
+-- A buffer is exactly N bytes; a Lua array of the same data costs roughly 16x
+-- that in TValue overhead and creates serious GC pressure.
+
+--- Convert a 1-based byte array into a native buffer.
+function Util.bytesToBuffer(bytes: { number }): buffer
+	local n = #bytes
+	local buf = buffer.create(n)
+	for i = 1, n do
+		buffer.writeu8(buf, i - 1, bit32.band(bytes[i] or 0, 0xFF))
+	end
+	return buf
+end
+
+--- Convert a native buffer into a 1-based byte array (tests / debugging).
+function Util.bufferToBytes(buf: buffer): { number }
+	local n = buffer.len(buf)
+	local out = table.create(n, 0)
+	for i = 0, n - 1 do out[i + 1] = buffer.readu8(buf, i) end
+	return out
+end
+
+--- True when `v` is a native buffer.
+function Util.isBuffer(v: any): boolean
+	return type(v) == "buffer"
+end
+
 -- Timing -------------------------------------------------------------------
 
 function Util.now(): number
