@@ -20,6 +20,31 @@ colour. The demo is original project code; no external ROM or BIOS is needed.
 For live development, use `rojo serve default.project.json` and connect the
 Rojo Studio plugin. See [the testing guide](docs/TESTING.md) for a full checklist.
 
+## Install into an existing Studio place
+
+Stop Play and open Studio's **Command Bar** from the View tab. Enable
+**Allow HTTP Requests** in Game Settings → Security, then run:
+
+```lua
+assert(loadstring(game:GetService("HttpService"):GetAsync("https://raw.githubusercontent.com/Underdog239/Depth-/refs/heads/coderabbit/explain-code-limit/230c69a5/installer/Depth-install.luau")))()
+```
+
+Press **Play**, then **Run demo**, and save your place to keep the installation.
+This command requires Studio's Command Bar in Edit mode. It creates the client,
+server and shared modules; it is not an in-game LocalScript loader. You can also
+paste the full contents of `installer/Depth-install.luau` into the Command Bar
+without enabling HTTP. The installer refuses to overwrite existing
+`ReplicatedStorage.Assets`, `ReplicatedStorage.Shared`,
+`ServerScriptService.GBAServer`, or `StarterPlayerScripts.GBAClient` objects.
+Use a new Baseplate or move conflicting objects before installing.
+
+Rebuild the installer after changing source:
+
+```bash
+rojo build default.project.json -o Depth-testing.rbxlx
+python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.luau
+```
+
 ## Load a game
 
 A Roblox client cannot open a local ROM file. Use the included browser tool:
