@@ -15,9 +15,12 @@ args = parser.parse_args()
 modules, entry, edges = compile_modules(args.place)
 assert sum(map(len, edges.values())) > 0
 assert Path(args.runtime).read_text() == bundle(args.place), 'Runtime artifact is stale'
+for artifact in [args.runtime, args.installer]:
+    text = Path(artifact).read_text()
+    assert not any(flag in text for flag in [':IsStudio(', ':IsRunning(', ':IsClient(']), 'Mode gate remains'
 mock = r'''
 local objects, tasks, warnings = {}, {}, {}
-local running, client = true, true
+local waitTimeouts = {}
 local function signal()
  local callbacks = {}
  return {Connect=function(_,fn) callbacks[fn]=true;return {Disconnect=function() callbacks[fn]=nil end} end,
@@ -45,7 +48,10 @@ local methods={}
 function methods:FindFirstChild(name)
  for _,object in objects do if object.Parent==self and object.Name==name and not object.destroyed then return object end end
 end
-function methods:WaitForChild(name) return assert(self:FindFirstChild(name),'Missing '..name) end
+function methods:WaitForChild(name, timeout)
+ if timeout then table.insert(waitTimeouts, timeout) end
+ return self:FindFirstChild(name)
+end
 function methods:GetChildren()
  local out={};for _,object in objects do if object.Parent==self and not object.destroyed then table.insert(out,object) end end;return out
 end
@@ -75,8 +81,8 @@ for _,name in {'Players','ReplicatedStorage','SoundService','GuiService','RunSer
  services[name]={}
 end
 services.RunService.IsStudio=function() error('Studio probe must not be required in running client') end
-services.RunService.IsRunning=function() return running end
-services.RunService.IsClient=function() return client end
+services.RunService.IsRunning=function() error('Running flag must not be consulted') end
+services.RunService.IsClient=function() error('Client flag must not be consulted') end
 services.RunService.RenderStepped=signal();services.RunService.Heartbeat=signal()
 local UIS=services.UserInputService
 UIS.TouchEnabled=false;UIS.KeyboardEnabled=true
@@ -113,10 +119,16 @@ end
 local count=#objects
 launch()
 assert(#objects==count,'Repeated launch created duplicate UI/audio')
-client=false
-assert(not pcall(launch),'Server execution should report unsupported context')
-assert(#objects==count,'Server attempt changed client objects')
-print('PASS: non-Studio client boots, demo advances, diagnostics scan tolerates no script Instance, duplicate launch is safe, server rejected; no Source access or script creation')
+playerGui.Parent=nil
+local ok,err=pcall(launch)
+assert(not ok and tostring(err):find('PlayerGui',1,true),'Missing PlayerGui must have an actionable error')
+assert(waitTimeouts[#waitTimeouts]==10,'PlayerGui wait must be bounded')
+assert(#objects==count,'Missing GUI mutated objects')
+playerGui.Parent=player
+services.Players.LocalPlayer=nil
+assert(not pcall(launch),'Missing player/capabilities must fail')
+assert(#objects==count,'Missing player attempt changed objects')
+print('PASS: non-Studio client boots, demo advances, diagnostics scan tolerates no script Instance, duplicate launch is safe, missing capabilities reported with bounded GUI wait; no mode flags, Source access or script creation')
 '''
 with tempfile.TemporaryDirectory(prefix='depth-runtime-') as directory:
     for name in [args.runtime,args.installer]:

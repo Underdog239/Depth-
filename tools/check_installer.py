@@ -21,7 +21,7 @@ def visit(item,path):
 for item in xml.findall('Item'): visit(item,'')
 mock=r'''
 local services, objects = {}, {}
-local studio, running, failSource, failParent = true, false, false, false
+local failSource, failParent = false, false
 local methods = {}
 function methods:FindFirstChild(name)
     for _, child in ipairs(objects) do
@@ -60,15 +60,16 @@ end
 local game = {}
 function game:GetService(name)
     if name == 'RunService' then return {
-        IsStudio = function() return studio end,
-        IsClient = function() return false end,
-        IsRunning = function() return running end,
+        IsStudio = function() error("Studio flag must not be consulted") end,
+        IsClient = function() error("Client flag must not be consulted") end,
+        IsRunning = function() error("Running flag must not be consulted") end,
     } end
+    if name == 'Players' then return {} end
     return assert(services[name], name)
 end
 local function reset()
     services, objects = {}, {}
-    studio, running, failSource, failParent = true, false, false, false
+    failSource, failParent = false, false
     for _, name in ipairs({'ReplicatedStorage', 'StarterPlayer'}) do
         local obj = Instance.new(name)
         obj.Name = name
@@ -106,23 +107,17 @@ unrelated.Parent = services.StarterPlayer:FindFirstChildOfClass('StarterPlayerSc
 before = #objects
 assert(not pcall(install), 'later destination collision must fail')
 assert(#objects == before and unrelated.Parent == services.StarterPlayer:FindFirstChildOfClass('StarterPlayerScripts'))
-for _, mode in ipairs({'outsideStudio', 'playing', 'source', 'parent'}) do
+for _, mode in ipairs({'source', 'parent'}) do
     reset()
     before = #objects
-    studio = mode ~= 'outsideStudio'
-    running = mode == 'playing'
     failSource = mode == 'source'
     failParent = mode == 'parent'
     assert(not pcall(install), mode .. ' must fail')
-    if mode == 'outsideStudio' or mode == 'playing' then
-        assert(#objects == before, mode .. ' mutated tree')
-    else
-        for i=before+1,#objects do
-            assert(objects[i].destroyed and objects[i].Parent == nil, mode .. ' cleanup')
-        end
+    for i=before+1,#objects do
+        assert(objects[i].destroyed and objects[i].Parent == nil, mode .. ' cleanup')
     end
 end
-print('PASS: full XML hierarchy/source fidelity (' .. count .. ' instances), collisions, execution-context guards, and failure cleanup')
+print('PASS: full XML hierarchy/source fidelity (' .. count .. ' instances), collisions, permission failure handling without mode flags, and failure cleanup')
 '''
 script='local expected = {\n'+',\n'.join(expected)+'\n}\n'+mock+Path(args.installer).read_text()+checks
 with tempfile.TemporaryDirectory(prefix='depth-installer-') as temporary:

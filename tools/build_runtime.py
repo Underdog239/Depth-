@@ -79,11 +79,11 @@ end
                       '-- Bundled modules have no individual script Instances. Source reports are prebuilt.\n'
                       'local script = nil\n' + source + '\nend\n')
     if launch:
-        output.append('''local __runService = game:GetService("RunService")
-assert(__runService:IsRunning() and __runService:IsClient(),
-    "Depth runtime needs a running Roblox client. Use a LocalScript, then Play/join the experience.")
-local __player = assert(game:GetService("Players").LocalPlayer, "Depth needs a local player")
-local __gui = __player:WaitForChild("PlayerGui")
+        output.append('''-- Check required capabilities, not Studio or execution-mode flags.
+local __player = assert(game:GetService("Players").LocalPlayer,
+    "Depth needs Players.LocalPlayer. Run this in a Roblox player client.")
+local __gui = assert(__player:WaitForChild("PlayerGui", 10),
+    "Depth could not find PlayerGui after 10 seconds. Wait for the player to finish loading and retry.")
 if __gui:FindFirstChild("LuauGBA") then
     warn("Depth is already running for this player; keeping the existing session.")
     return

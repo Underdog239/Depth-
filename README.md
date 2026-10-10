@@ -32,15 +32,18 @@ both Studio play sessions and published Roblox clients. No separate Shared
 modules or script `.Source` writes are required; small ROM paste/demo work
 immediately, and an existing `ReplicatedStorage.Assets.ROM` is still supported.
 
-The runtime requires Roblox client services and a local player. It is not
+The runtime checks for `Players.LocalPlayer` and waits up to 10 seconds for
+`PlayerGui`. Neither entry point checks Studio, running-mode or client-mode flags.
+It requires Roblox client services. It is not
 portable to plain Lua, Roblox servers or a browser. It does not enable HTTP or
 `loadstring` in ordinary LocalScripts; use the full source as the LocalScript.
 Source diagnostics use the bundled repository report because individual module
 Instances no longer exist. Running it again preserves the existing session.
 
-`Depth-install.luau` now chooses a mode automatically: in a running client it
-starts the same bundled runtime; in Studio Edit mode it installs the normal
-module hierarchy. Server execution gives a clear client-context error.
+`Depth-install.luau` starts the same bundled runtime whenever `LocalPlayer` is
+available. Otherwise it attempts to install the normal module hierarchy, which
+requires script `.Source` permissions (normally Studio's Edit-mode Command Bar).
+Use `Depth-runtime.luau` for direct client execution.
 
 ## Install into an existing Studio place
 

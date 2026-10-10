@@ -62,6 +62,11 @@ These checks require Roblox Studio and remain manual acceptance gates.
     verify the same startup. Re-running keeps one UI/session. Roblox server
     execution is intentionally unsupported. Actual Studio/published-device
     acceptance remains outstanding; mocks only cover the runtime path.
+    Both entry points must boot with `IsStudio`, `IsRunning` and `IsClient`
+    unavailable. Missing `PlayerGui` must report an error after a 10-second wait;
+    missing `LocalPlayer` must report a client requirement in the runtime.
+    The installer selects source installation when `LocalPlayer` is absent;
+    that path requires source-write permission and cleans up failed installs.
 
 ## Automated verification
 

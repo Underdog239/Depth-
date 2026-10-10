@@ -42,7 +42,9 @@ remove the previous Depth objects, then reinstall. Save the place afterward.
 A protected Roblox LocalScript cannot download and replace its own source.
 The standalone Depth-runtime.luau avoids runtime source writes by compiling
 module factories into one LocalScript. The installer selects this same runtime
-when it is executed in an already running client.
+whenever `Players.LocalPlayer` is available. Neither entry point checks Studio
+or execution-mode flags. Source installation still requires `.Source` permission;
+direct execution requires Roblox client services and `PlayerGui`.
 
 ```bash
 python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
