@@ -25,3 +25,6 @@ src/Assets/ROM.luau
 Depth-game.luau
 Install-ROM.luau
 ROM.luau
+
+# Staged GitHub Pages artifact
+_site/

@@ -90,6 +90,13 @@ python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.lua
 python3 tools/build_runtime.py Depth-testing.rbxlx installer/Depth-runtime.luau
 ```
 
+## Host the ROM helper on GitHub
+
+A GitHub Pages workflow is included. A repository administrator enables
+**Settings → Pages → Source: GitHub Actions**, then re-runs the Pages deployment.
+See [hosting setup and ROM privacy](docs/GITHUB_PAGES.md). Each visitor's ROM stays
+in their own browser; the website needs no user accounts or shared ROM storage.
+
 ## Load a game
 
 A Roblox client cannot open a local ROM file. Download `web/rom-tool.html`

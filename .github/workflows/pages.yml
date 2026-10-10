@@ -1,0 +1,43 @@
+name: Publish ROM helper to GitHub Pages
+on:
+  push:
+    branches:
+      - coderabbit/explain-code-limit/230c69a5
+    paths:
+      - web/**
+      - tools/build_pages.py
+      - tools/check_rom_tool.cjs
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify ROM helper
+        run: node tools/check_rom_tool.cjs
+      - name: Build static site
+        run: python3 tools/build_pages.py _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Publish site
+        id: deployment
+        uses: actions/deploy-pages@v4

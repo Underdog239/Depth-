@@ -7,8 +7,9 @@ archives before choosing a file.
 
 ## Client launcher — no Studio installation
 
-1. Download `web/rom-tool.html` from GitHub (Download raw file), then open the
-   downloaded HTML file in your browser. The same helper is supplied in Outputs.
+1. Open your deployed GitHub Pages ROM helper (see [hosting setup](GITHUB_PAGES.md)),
+   or download `web/rom-tool.html` from GitHub and open it in your browser.
+   The same helper is supplied in Outputs.
 2. Choose your `.gba` file and press **Generate**.
 3. Press **Download client launcher**. Open `Depth-game.luau` as text.
 4. Join a fresh Roblox session and run the **entire downloaded script** in your
