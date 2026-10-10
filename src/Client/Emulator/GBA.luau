@@ -16,6 +16,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local MemoryBus = require(script.Parent.Bus.MemoryBus)
 local Regions = require(script.Parent.Bus.Regions)
 local Arm7tdmi = require(script.Parent.CPU.Arm7tdmi)
+local IdleLoop = require(script.Parent.CPU.IdleLoop)
 local Cartridge = require(script.Parent.Cart.Cartridge)
 local HLEBIOS = require(script.Parent.Cart.HLEBIOS)
 local Interrupts = require(script.Parent.Hardware.Interrupts)
@@ -121,19 +122,51 @@ end
 -- which is a few hundred nanoseconds of emulated time - far below a scanline.
 local TICK_BATCH = 4
 
+-- A skipped wait must stop before anything can change its inputs: scanline
+-- transitions/DMA/IRQs, timer overflow/FIFO refill, or an audio clock edge.
+function GBA:nextEventCycles(): number
+	local ppu = self.ppu
+	local nextEvent = (ppu.dot < 1006 and 1006 or 1232) - ppu.dot
+	for _, timer in self.timers.list do
+		if timer.enabled and not timer.cascade then
+			nextEvent = math.min(nextEvent, (0x10000 - timer.counter) * timer.prescale - timer.prescaleCounter)
+		end
+	end
+	local apu = self.apu
+	if apu.masterEnable then
+		nextEvent = math.min(nextEvent, 32768 - apu.frameAcc, apu.cyclesPerSample - apu.sampleAcc)
+		for _, ch in apu.ch do if ch.enabled then nextEvent = math.min(nextEvent, ch.timer) end end
+	end
+	return math.max(1, math.ceil(nextEvent))
+end
+
+function GBA:skipIdle(info: any): boolean
+	self:flushCycles()
+	if not self.cpu.irqDisable and self.interrupts:pending() then return false end
+	local loops = math.floor((self:nextEventCycles() - 1) / info.cycles)
+	if loops <= 0 then return false end
+	local cycles = loops * info.cycles
+	self.cpu.instructions += loops * info.instructions
+	self.cpu.lastPc = info.finish
+	self.cpu.idleCycles = (self.cpu.idleCycles or 0) + cycles
+	self.bus:tick(cycles)
+	return true
+end
+
 --- Run a single CPU instruction with proper cycle accounting.
-function GBA:stepInstruction()
+function GBA:stepInstruction(fastHalt: boolean?)
 	if self.cpu.halted then
+		if fastHalt then self:flushCycles() end
 		local pending = bit32.band(self.interrupts.ie, self.interrupts.if_)
 		if pending ~= 0 then
 			if self.cpu._intrWaitFlags and bit32.band(pending, self.cpu._intrWaitFlags) == 0 then
-				self.bus:tick(4)
+				self.bus:tick(fastHalt and self:nextEventCycles() or 4)
 				return
 			end
 			self.cpu._intrWaitFlags = nil
 			self.cpu.halted = false
 		else
-			self.bus:tick(4)
+			self.bus:tick(fastHalt and self:nextEventCycles() or 4)
 			return
 		end
 	end
@@ -167,6 +200,8 @@ function GBA:runFrame(maxMilliseconds: number?): number
 	local guard = 0
 	local maxIterations = Config.CORE.maxCyclesPerFrame
 	local deadline = maxMilliseconds and os.clock() + maxMilliseconds / 1000 or nil
+	local idle = nil
+	local skipWaits = Config.CORE.idleLoopSkip and not Config.CORE.traceInstructions
 
 	-- Optional fixed-budget mode: ignore VBlank pacing and run a set number of
 	-- cycles. Used for benchmarking and for titles that need a speed nudge.
@@ -184,9 +219,18 @@ function GBA:runFrame(maxMilliseconds: number?): number
 	end
 
 	while not self.ppu.frameComplete do
-		self:stepInstruction()
+		local skipped = false
+		if skipWaits then
+			local pc = self.cpu.regs[16]
+			if idle and (pc < idle.start or pc > idle.finish or self.cpu.thumb ~= idle.thumb) then idle = nil end
+			if (idle and pc == idle.start) or (not idle and guard % 127 == 126) then
+				idle = IdleLoop.probe(self.cpu)
+				if idle then skipped = self:skipIdle(idle) end
+			end
+		end
+		if not skipped then self:stepInstruction(skipWaits) end
 		guard += 1
-		if deadline and guard % 256 == 0 and os.clock() >= deadline then break end
+		if deadline and guard % 32 == 0 and os.clock() >= deadline then break end
 		if guard >= maxIterations then
 			if self.diag then
 				self.diag.report("frame budget exhausted before VBlank", {

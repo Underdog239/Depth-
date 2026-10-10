@@ -92,6 +92,12 @@ function MemoryBus:read16(addr: number): number
 		if cart then return cart:read16(band(addr, 0x1FFFFFF)) end
 		return 0
 	end
+	if top == 2 or top == 3 then
+		local ram = top == 2 and self.ewram or self.iwram
+		local mask = top == 2 and Regions.EWRAM_MASK or Regions.IWRAM_MASK
+		local off = band(addr, mask)
+		if off < mask then return ram[off + 1] + ram[off + 2] * 0x100 end
+	end
 	if top == 0x04 then return self:readIO16(band(addr, 0x3FE)) end
 	if top >= 0x0E then
 		-- SRAM/Flash are 8-bit parts: a wider read returns the same byte in
@@ -111,6 +117,14 @@ function MemoryBus:read32(addr: number): number
 		local cart = self.cart
 		if cart then return cart:read32(band(addr, 0x1FFFFFF)) end
 		return 0
+	end
+	if top == 2 or top == 3 then
+		local ram = top == 2 and self.ewram or self.iwram
+		local mask = top == 2 and Regions.EWRAM_MASK or Regions.IWRAM_MASK
+		local off = band(addr, mask)
+		if off <= mask - 3 then
+			return ram[off + 1] + ram[off + 2] * 0x100 + ram[off + 3] * 0x10000 + ram[off + 4] * 0x1000000
+		end
 	end
 	if top == 0x04 then
 		return self:readIO16(band(addr, 0x3FC)) + self:readIO16(band(addr + 2, 0x3FE)) * 0x10000
@@ -176,6 +190,12 @@ end
 function MemoryBus:write16(addr: number, value: number)
 	local top = addr // 0x1000000
 	if top < 0x0E then addr = band(addr, bnot(1)) end
+	if top == 2 or top == 3 then
+		local ram = top == 2 and self.ewram or self.iwram
+		local off = band(addr, top == 2 and Regions.EWRAM_MASK or Regions.IWRAM_MASK)
+		ram[off + 1], ram[off + 2] = band(value, 0xFF), band(value // 0x100, 0xFF)
+		return
+	end
 	if top == 0x04 then return self:writeIO16(band(addr, 0x3FE), value) end
 	if top >= 0x0E then
 		-- SRAM/Flash are 8-bit parts. A wider store latches a single byte,
@@ -218,6 +238,13 @@ function MemoryBus:write32(addr: number, value: number)
 	-- Address bits are region-specific: 16/32-bit parts ignore them, while the
 	-- 8-bit save chips use A0/A1 as the byte-lane selector.
 	if top < 0x0E then addr = band(addr, bnot(3)) end
+	if top == 2 or top == 3 then
+		local ram = top == 2 and self.ewram or self.iwram
+		local off = band(addr, top == 2 and Regions.EWRAM_MASK or Regions.IWRAM_MASK)
+		ram[off + 1], ram[off + 2] = band(value, 0xFF), band(value // 0x100, 0xFF)
+		ram[off + 3], ram[off + 4] = band(value // 0x10000, 0xFF), band(value // 0x1000000, 0xFF)
+		return
+	end
 	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
 		self:writeIO16(band(addr, 0x3FC), band(value, 0xFFFF))

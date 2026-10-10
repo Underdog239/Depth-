@@ -33,6 +33,7 @@ function Ppu.new(bus: any, interrupts: any)
 		winh = { 0, 0 }, winv = { 0, 0 }, winin = 0, winout = 0,
 		mosaic = 0, bldcnt = 0, bldalpha = 0, bldy = 0,
 		dot = 0, line = 0, frameComplete = false, frame = 0,
+		renderEvery = 1, drawThisFrame = true, frameRendered = false,
 		framebuffer = buffer.create(W * H * 4),
 		scanline = table.create(W, 0),
 		scanPrio = table.create(W, 4),
@@ -169,19 +170,27 @@ function Ppu:tick(cycles: number)
 		cycles -= step
 		if self.dot == 1006 then
 			if self.line < H then
-				self:_renderScanline(self.line)
-				self:_blitLine(self.line)
+				if self.drawThisFrame then
+					self:_renderScanline(self.line)
+					self:_blitLine(self.line)
+				end
 				if self.dma then self.dma:trigger(2) end
 			end
 			if band(self.dispstat, 0x10) ~= 0 then self.interrupts:raise(Interrupts.HBLANK) end
 		elseif self.dot == CYCLES_PER_LINE then
 			self.dot = 0
 			self.line = (self.line + 1) % LINES_TOTAL
+			if self.line == 0 then
+				-- Latch at the beginning of a frame so policy changes never
+				-- produce a display with only some scanlines updated.
+				self.drawThisFrame = self.frame % math.max(1, self.renderEvery) == 0
+			end
 			if self.line == H then
 				if band(self.dispstat, 8) ~= 0 then self.interrupts:raise(Interrupts.VBLANK) end
 				if self.dma then self.dma:trigger(1) end
 				self.frame += 1
 				self.frameComplete = true
+				self.frameRendered = self.drawThisFrame
 			end
 			if self.line == band(self.dispstat // 0x100, 0xFF) and band(self.dispstat, 0x20) ~= 0 then
 				self.interrupts:raise(Interrupts.VCOUNT)
@@ -275,40 +284,45 @@ function Ppu:_renderTextBg(bg: number, y: number, maskArr: { number })
 	local mapH = (size == 2 or size == 3) and 512 or 256
 	local hofs, vofs = self.bghofs[bg], self.bgvofs[bg]
 	local msize = (band(cnt, 0x40) ~= 0) and (band(self.mosaic, 0xF) + 1) or 1
+	local sy = y + vofs
+	if msize > 1 then sy = (sy // msize) * msize end
+	sy %= mapH
+	local mapRow = screenBase + (sy // 256) * (mapW // 256) * 0x800 + ((sy % 256) // 8) * 64
+	local row = sy % 8
+	local vram, palette = self.bus.vram, self.bus.pal
+	local previousEntry, tileRow, pbank, hflip = -1, 0, 0, false
 
 	for x = 1, W do
 		if band(maskArr[x], layerBit) == 0 then continue end
 		local sx = (x - 1 + hofs)
-		local sy = (y + vofs)
 		if msize > 1 then
 			sx = (sx // msize) * msize
-			sy = (sy // msize) * msize
 		end
 		sx %= mapW
-		sy %= mapH
-		local blockX = sx // 256
-		local blockY = sy // 256
-		local base = screenBase + (blockY * (mapW // 256) + blockX) * 0x800
-		local mx = (sx % 256) // 8
-		local my = (sy % 256) // 8
-		local entry = self:_vram16(base + (my * 32 + mx) * 2)
-		local tile = band(entry, 0x3FF)
-		local pbank = band(entry // 0x1000, 0xF)
+		local entryOffset = mapRow + (sx // 256) * 0x800 + ((sx % 256) // 8) * 2
+		-- Map entries and tile-row flags stay constant for eight pixels. The
+		-- CPU/DMA cannot mutate VRAM during this synchronous scanline render.
+		if entryOffset ~= previousEntry then
+			previousEntry = entryOffset
+			local entry = (vram[entryOffset + 1] or 0) + (vram[entryOffset + 2] or 0) * 0x100
+			local py = band(entry, 0x800) ~= 0 and 7 - row or row
+			tileRow = charBase + band(entry, 0x3FF) * (colors8 and 64 or 32) + py * (colors8 and 8 or 4)
+			pbank = band(entry // 0x1000, 0xF) * 16
+			hflip = band(entry, 0x400) ~= 0
+		end
 		local px = sx % 8
-		local py = sy % 8
-		if band(entry, 0x400) ~= 0 then px = 7 - px end
-		if band(entry, 0x800) ~= 0 then py = 7 - py end
-		local addr = charBase + tile * (colors8 and 64 or 32)
+		if hflip then px = 7 - px end
 		local idx
 		if colors8 then
-			idx = self:_vram8(addr + py * 8 + px)
+			idx = vram[tileRow + px + 1] or 0
 		else
-			local b = self:_vram8(addr + py * 4 + (px // 2))
+			local b = vram[tileRow + (px // 2) + 1] or 0
 			idx = (px % 2 == 0) and band(b, 0xF) or b // 0x10
 		end
 		if idx ~= 0 then
-			local palIdx = colors8 and idx or (pbank * 16 + idx)
-			put(self, x, self:_pal(palIdx), prio, bg, false)
+			local palOffset = (colors8 and idx or (pbank + idx)) * 2
+			local color = (palette[palOffset + 1] or 0) + (palette[palOffset + 2] or 0) * 0x100
+			put(self, x, color, prio, bg, false)
 		end
 	end
 end

@@ -31,7 +31,9 @@ Config.RENDER = {
 -- Core loop -----------------------------------------------------------------
 Config.CORE = {
 	-- Yield the client frame after this budget; headless tests run whole frames.
-	clientSliceMs = 8,
+	clientSliceMs = 12,
+	-- Skip only proven unchanged THUMB wait loops, stopping before each event.
+	idleLoopSkip = true,
 	-- Hard ceiling on emulated instructions per rendered frame. Prevents a
 	-- runaway frame from freezing the Roblox client (watchdog guards too).
 	maxCyclesPerFrame = Config.CYCLES_PER_FRAME * 2,

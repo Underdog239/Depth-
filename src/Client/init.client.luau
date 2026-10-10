@@ -47,6 +47,8 @@ local paused = false
 local frameIndex = 0
 local savedState = nil
 local emulationDebt = 0
+local speedTime, speedFrames, gameFps = 0, 0, 0
+local completedPixels = buffer.create(Config.FRAME_PIXELS * 4)
 
 local ui, renderer, input, dashboard
 
@@ -64,6 +66,7 @@ local function loadRomBytes(bytes: buffer)
 	running = true
 	paused = false
 	emulationDebt = 0
+	speedTime, speedFrames, gameFps = 0, 0, 0
 	savedState = nil
 	ui:setRunning(true)
 	ui:setStatus(describeRom(info, gba.cart.size))
@@ -206,9 +209,27 @@ local function onFrame(dt: number)
 	end
 	if playing and emulationDebt >= 1 / Config.FPS then
 		gba:setKeys(input.mask)
+		gba.ppu.renderEvery = adaptive.renderEvery
 		watchdog:beginFrame(frameIndex)
 		profiler:beginSection("emulate")
-		local ok, err = pcall(function() gba:runFrame(adaptive.sliceMs) end)
+		local completed = false
+		local deadline = os.clock() + adaptive.sliceMs / 1000
+		local ok, err = pcall(function()
+			-- A 30 Hz host can still advance two GBA frames. All catch-up work
+			-- shares one deadline; incomplete frames resume on the next callback.
+			while emulationDebt >= 1 / Config.FPS do
+				local remainingMs = (deadline - os.clock()) * 1000
+				if remainingMs <= 0 then break end
+				gba:runFrame(remainingMs)
+				if not gba.ppu.frameComplete then break end
+				if gba.ppu.frameRendered then
+					completed = true
+					buffer.copy(completedPixels, 0, gba:framebuffer())
+				end
+				speedFrames += 1
+				emulationDebt = math.max(0, emulationDebt - 1 / Config.FPS)
+			end
+		end)
 		profiler:endSection("emulate")
 		watchdog:endFrame(frameIndex, gba.bus.cycles)
 		if not ok then
@@ -220,12 +241,9 @@ local function onFrame(dt: number)
 		end
 
 
-		if gba.ppu.frameComplete then
-			emulationDebt = math.max(0, emulationDebt - 1 / Config.FPS)
-		end
-		if gba.ppu.frameComplete and adaptive:shouldPresent(gba.ppu.frame) then
+		if completed then
 			profiler:beginSection("present")
-			local okP, errP = pcall(function() renderer:present(gba:framebuffer()) end)
+			local okP, errP = pcall(function() renderer:present(completedPixels) end)
 			profiler:endSection("present")
 			if not okP then
 				Diagnostics.report(`present error: {errP}`, { source = "renderer", kind = "runtime-error", severity = "error" })
@@ -234,7 +252,15 @@ local function onFrame(dt: number)
 	end
 
 	local frameMs = math.max(dt, os.clock() - frameStart) * 1000
-	if playing then adaptive:sample(frameMs) end
+	if playing then
+		adaptive:sample(frameMs)
+		speedTime += dt
+		if speedTime >= 1 then
+			gameFps = speedFrames / speedTime
+			adaptive:sampleGameSpeed(gameFps)
+			speedTime, speedFrames = 0, 0
+		end
+	end
 	audio:pump()
 	if frameIndex % 60 == 0 then ui:setAudioStatus(audio:status()) end
 
@@ -242,8 +268,8 @@ local function onFrame(dt: number)
 		local p = profiler:report()
 		-- UI refresh is throttled independently of emulation.
 		local state = not running and "stopped" or (paused and "paused" or (menuOpen and "menu paused" or (not focused and "unfocused" or "running")))
-		ui:setMetrics(string.format("%s · %s · GBA frames %d\nPC %08X · LCD %04X · work %.1fms · budget %.0fms",
-			renderer.backend, state, gba.frames, gba.cpu.regs[16], gba.ppu.dispcnt,
+		ui:setMetrics(string.format("%s · %s · GBA frames %d · %.1f FPS (%d%%)\nPC %08X · LCD %04X · work %.1fms · budget %.0fms",
+			renderer.backend, state, gba.frames, gameFps, math.floor(gameFps / Config.FPS * 100 + 0.5), gba.cpu.regs[16], gba.ppu.dispcnt,
 			p.emulate or 0, adaptive.sliceMs))
 	end
 end

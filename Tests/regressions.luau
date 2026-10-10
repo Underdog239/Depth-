@@ -171,7 +171,9 @@ check("HLE IRQ restores mode and returns to ROM", gba.cpu.mode == 0x1F and gba.c
 local sliced = GBA.new({rom = Demo.create()})
 sliced:runFrame(0)
 check("client slice yields before full frame", not sliced.ppu.frameComplete and sliced.frames == 0 and sliced.cpu.instructions <= 256)
-for _ = 1, 2000 do
+-- Zero-budget slices now check their deadline every 32 operations, giving
+-- control back more frequently. Allow enough slices for a full CPU frame.
+for _ = 1, 20000 do
  sliced:runFrame(0)
  if sliced.ppu.frameComplete then break end
 end

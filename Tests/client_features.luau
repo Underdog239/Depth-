@@ -23,18 +23,26 @@ check("out-of-range button rejected",not pcall(function() input:set("bad",10,tru
 input:set("touch",9,true);input:clear()
 check("focus release clears all input sources",input:mask(0.25)==0)
 local phone,pc=Adaptive.new(true),Adaptive.new(false)
-check("touch profile has smaller CPU budget",phone.sliceMs==4 and pc.sliceMs==8)
-for _=1,200 do phone:sample(60);pc:sample(60) end
+check("balanced profiles give emulation more bounded work",phone.sliceMs==8 and pc.sliceMs==12)
+for _=1,400 do phone:sample(60);pc:sample(60) end
 check("slow devices reduce bounded work",phone.sliceMs==2 and pc.sliceMs==2)
 check("slow devices throttle presentations",not pc:shouldPresent(1) and pc:shouldPresent(2))
-for _=1,1500 do pc:sample(16) end
-check("stable performance recovers desktop budget",pc.sliceMs==8 and pc.presentEvery==1)
+for _=1,3000 do pc:sample(16) end
+check("stable performance recovers desktop budget",pc.sliceMs==14 and pc.presentEvery==1)
 pc:setLowPower(true)
 for _=1,1000 do pc:sample(16) end
 check("battery mode remains capped",pc.sliceMs<=3 and not pc:shouldPresent(1))
 pc:setLowPower(false)
+check("leaving battery mode restores work immediately",pc.sliceMs==12)
 for _=1,1500 do pc:sample(16) end
-check("balanced mode restores headroom",pc.sliceMs==8)
+check("balanced mode restores headroom",pc.sliceMs==14)
+pc:sampleGameSpeed(20);pc:sampleGameSpeed(20)
+check("slow emulation reduces raster work",pc.renderEvery==3)
+for _=1,9 do pc:sampleGameSpeed(60) end
+check("drawing quality recovers after sustained game speed",pc.renderEvery==1)
+pc:setLowPower(true)
+for _=1,9 do pc:sampleGameSpeed(60) end
+check("battery drawing remains bounded",pc.renderEvery==2)
 local apu=Apu.new()
 for i=1,4096 do apu.buffer[i]=i end
 local first=apu:readSamples(3)

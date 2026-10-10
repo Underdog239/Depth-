@@ -59,6 +59,7 @@ function CPU.new(bus: any)
 		halted = false,
 		-- diagnostics counters
 		instructions = 0,
+		idleCycles = 0,
 		lastPc = 0,
 	}
 	return setmetatable(cpu, CPU) :: any

@@ -77,8 +77,10 @@ python3 tools/prepare_tests.py
 luau build/Tests/run.luau
 luau build/Tests/regressions.luau
 luau build/Tests/client_features.luau
+luau build/Tests/performance.luau
 python3 tools/check_client_adapters.py
 python3 tools/check_renderer.py
+python3 tools/check_pacing.py
 node tools/check_rom_tool.cjs
 python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
 python3 tools/fetch_gba_tests.py
@@ -153,3 +155,18 @@ scaling. These BIOS calls are now supported and tested with synthetic fixtures
 for rotation, signed scales, origins, packed/OAM strides and overlapping output.
 Actual FireRed startup and gameplay have not been verified with a game ROM;
 this compatibility fix alone does not establish that a white-screen stall is resolved.
+
+## Slow gameplay
+
+Balanced mode now starts with a bounded 12 ms desktop / 8 ms touch CPU slice.
+Proven unchanged wait loops advance to the next hardware event; memory writes,
+volatile reads, countdowns and unknown code continue through the interpreter.
+Catch-up frames share one deadline. When game speed falls behind, the client
+draws every second or third frame while continuing game logic and hardware
+timing. The drawing rate recovers after sustained speed improvement.
+
+The status bar shows measured GBA FPS and speed relative to the 59.7275 Hz
+target. This measures emulated game progress rather than Roblox's FPS.
+`performance.luau` verifies normal/fast state equivalence with DMA, IRQ, timers
+and audio, plus raster timing and tile-renderer fingerprints. Its printed
+benchmark is synthetic; it does not establish FireRed speed on a real device.

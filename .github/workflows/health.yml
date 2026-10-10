@@ -34,9 +34,10 @@ jobs:
         run: |
           python3 tools/prepare_tests.py
           python3 tools/fetch_gba_tests.py
-          luau build/Tests/run.luau build/Tests/regressions.luau build/Tests/client_features.luau build/Tests/gba_suite.luau
+          luau build/Tests/run.luau build/Tests/regressions.luau build/Tests/client_features.luau build/Tests/performance.luau build/Tests/gba_suite.luau
           python3 tools/check_client_adapters.py
           python3 tools/check_renderer.py
+          python3 tools/check_pacing.py
           node tools/check_rom_tool.cjs
           find src Tests -name '*.luau' -print0 | xargs -0 luau-compile --null
       - name: Validate client place and installer
