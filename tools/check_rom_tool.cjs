@@ -9,7 +9,9 @@ const get = id => {
  if (!nodes.has(id)) nodes.set(id, {value: id === 'chunk' ? '50000' : '', disabled:false, textContent:'', innerHTML:'', listeners:{}, classList:{add(){},remove(){}}, addEventListener(event,fn){this.listeners[event]=fn;}, click(){}, select(){}});
  return nodes.get(id);
 };
-const ctx = {document:{getElementById:get,createElement:()=>({click(){}})},window:{},btoa:s=>Buffer.from(s,'binary').toString('base64'),console,Uint8Array,Blob,URL,setTimeout,navigator:{clipboard:{writeText:async()=>{}}}};
+const downloads = []; let clipboard = null;
+const localURL = {createObjectURL:blob=>{ downloads.push(blob); return "blob:local"; },revokeObjectURL(){}};
+const ctx = {document:{getElementById:get,createElement:()=>({click(){}})},window:{},btoa:s=>Buffer.from(s,'binary').toString('base64'),console,Uint8Array,Blob,URL:localURL,setTimeout,navigator:{clipboard:{writeText:async text=>{clipboard=text;}}}};
 vm.createContext(ctx);
 const script = fs.readFileSync(repo+'/web/rom-tool.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
 vm.runInContext(script,ctx);
@@ -22,6 +24,9 @@ assert.match(get('info').innerHTML,/&lt;img/);
 assert.doesNotMatch(get('info').innerHTML,/<img/);
 assert.match(get('info').innerHTML,/valid/);
 get('gen').listeners.click();
+assert.equal(get('raw').disabled,false);
+get('raw').listeners.click();
+const rawDownload=downloads[0];
 const chunks = [...ctx.window.__romluau.matchAll(/"([A-Za-z0-9+/=]+)"/g)].map(m=>m[1]).join('');
 assert.deepEqual(Buffer.from(chunks,'base64'),Buffer.from(ctx.rom));
 assert.equal(get('install').disabled,false);
@@ -38,9 +43,25 @@ assert.match(ctx.window.__rominstaller,/not assets:FindFirstChild\("ROM"\)/);
 if(process.argv[2]) fs.writeFileSync(process.argv[2],ctx.window.__rominstaller);
 vm.runInContext('load(rom, "second.gba")',ctx);
 for(const id of ['dl','copy','install','client']) assert.equal(get(id).disabled,true);
+assert.equal(get('raw').disabled,false, 'A newly selected valid ROM is ready for raw download');
 vm.runInContext('load(new Uint8Array(4), "bad.gba")',ctx);
 assert.equal(get('gen').disabled,true);
+assert.equal(get('raw').disabled,true);
 get('gen').listeners.click();
 assert.equal(ctx.window.__rominstaller,null);
 assert.equal(ctx.window.__romclient,null);
 console.log('PASS: metadata escaping, checksum, ROM bytes, client launcher payload, installer source fidelity/collision guard, stale outputs and invalid sizes');
+
+async function checkSmallLauncher() {
+ assert.deepEqual(Buffer.from(await rawDownload.arrayBuffer()), Buffer.from(ctx.rom), 'Raw ROM download must preserve every byte');
+ await get('small').listeners.click();
+ assert(clipboard.length < 250, 'Small launcher must fit a short paste');
+ assert.match(clipboard,/Depth-file-launcher\.luau/);
+ assert.doesNotMatch(clipboard,/AAA{100}/);
+ ctx.navigator.clipboard.writeText=async()=>{throw new Error('blocked');};
+ await get('small').listeners.click();
+ assert.equal(get('preview').value,clipboard, 'Clipboard fallback must expose the same small launcher');
+ assert.match(get('status').textContent,/copy it manually/);
+ console.log('PASS: raw ROM download byte fidelity; small launcher clipboard and manual fallback');
+}
+checkSmallLauncher().catch(error=>{console.error(error);process.exitCode=1;});

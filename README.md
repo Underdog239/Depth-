@@ -109,6 +109,10 @@ from GitHub and open the downloaded file in your browser. Files stay local.
 4. Studio/Rojo users can expand the helper's export options. See
    [ROM loading](docs/ROM_LOADING.md) for installation and troubleshooting.
 
+If the embedded script is too large to paste, use **Copy small launcher** with
+`Depth-ROM.gba` in your loader's workspace. This requires `readfile`; see the ROM
+guide for folder setup and alternatives.
+
 The helper supports up to 32 MiB; your loader may impose a smaller limit. The
 in-game paste box is limited to 200,000 base64 characters.
 

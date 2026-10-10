@@ -152,6 +152,9 @@ with tempfile.TemporaryDirectory(prefix='depth-runtime-') as directory:
         rom_checks = rom_checks.replace("local tabs, fields", "local loaded=false; for _,object in objects do if object.ClassName=='TextLabel' and object.Text and object.Text:find('ROM:',1,true) then loaded=true end end; assert(loaded,'Launcher ROM did not auto-load')\nlocal tabs, fields")
         script.write_text(mock+Path(name).read_text()+rom_checks)
         subprocess.run([args.luau,str(script)],check=True)
+        raw_checks = rom_checks.replace('launch("' + base64.b64encode(bytes(192)).decode() + '")', 'launch(buffer.create(192))', 1)
+        script.write_text(mock+Path(name).read_text()+raw_checks)
+        subprocess.run([args.luau,str(script)],check=True)
         script.write_text(mock+Path(name).read_text()+"\nend\nlocal count=#objects; assert(not pcall(launch,'!!!')); assert(#objects==count, 'Invalid launcher ROM created UI')\n")
         subprocess.run([args.luau,str(script)],check=True)
     # Exercise the browser-generated launcher's handoff into the real runtime.
@@ -176,6 +179,45 @@ assert(loaded, 'Browser launcher did not hand ROM to runtime')
 print('PASS: browser-generated client launcher loads its ROM into actual bundled runtime with HTTP/compiler mocked')
 ''')
     subprocess.run([args.luau,str(script)],check=True)
+    file_launcher = Path(__file__).resolve().parent.parent/'installer/Depth-file-launcher.luau'
+    file_mock = mock+Path(args.runtime).read_text()+'''
+end
+local readfile=function(path)
+ assert(path=="Depth-ROM.gba", 'Unexpected ROM path')
+ return string.rep("\\0",192)
+end
+local loadstring=function(source,name)
+ assert(source=="verified runtime" and name=="Depth-runtime")
+ return launch
+end
+game.HttpGet=function() return "verified runtime" end
+local function launchFile(...)
+'''
+    file_checks = '''
+end
+launchFile()
+assert(playerGui:FindFirstChild('LuauGBA'),'File launcher must create UI')
+local loaded=false
+for _,object in objects do
+ if object.ClassName=='TextLabel' and object.Text and object.Text:find('ROM:',1,true) then loaded=true end
+end
+assert(loaded, 'Local raw ROM did not load')
+assert(not pcall(launchFile),'Existing session should require fresh session')
+print('PASS: file launcher reads local ROM and loads actual bundle; duplicate session is reported')
+'''
+    script.write_text(file_mock+file_launcher.read_text()+file_checks)
+    subprocess.run([args.luau,str(script)],check=True)
+    for setup, message in [
+        ('readfile=nil', 'readfile support'),
+        ('readfile=function() error("not found") end', 'workspace folder'),
+        ('readfile=function() return "ZIP" end', 'raw GBA data'),
+        ('game.HttpGet=function() error("offline") end', 'download Depth'),
+        ('loadstring=function() return nil,"compile failed" end', 'compile failed'),
+    ]:
+        script.write_text(file_mock+file_launcher.read_text()+
+            "\nend\n"+setup+"\nlocal count=#objects; local ok,err=pcall(launchFile); assert(not ok and tostring(err):find("+
+            repr(message)+",1,true),tostring(err)); assert(#objects==count,'File failure created UI')\n")
+        subprocess.run([args.luau,str(script)],check=True)
     # Execute cached factories and actual emulator modules from the bundle.
     library=Path(directory)/'library.luau'
     library.write_text('local Enum = {KeyCode = setmetatable({}, {__index=function(_,key) return key end})}\n'

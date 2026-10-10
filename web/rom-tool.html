@@ -54,7 +54,19 @@
   </div>
 
   <div class="panel">
-    <h2>02 / Prepare your launcher</h2>
+    <h2>02 / Small launcher · no huge paste</h2>
+    <p>If your script loader supports <code>readfile</code>, save your ROM as
+    <code>Depth-ROM.gba</code> in that loader's <b>workspace folder</b>.
+    This is the folder the loader permits scripts to read; your Downloads folder
+    is usually different. The website cannot move a file into it for you.</p>
+    <div class="row">
+      <button id="raw" disabled>Download Depth-ROM.gba</button>
+      <button id="small" class="ghost">Copy small launcher</button>
+    </div>
+    <p class="sub" style="margin:16px 0">Then rejoin Roblox and run the small launcher first.
+    It reads the local ROM directly. If your loader has no local file support,
+    use its file import feature for the embedded launcher below.</p>
+    <details><summary>Embedded launcher / tiny ROM paste</summary>
     <div class="row">
       <button id="gen" disabled>Generate</button>
       <button id="client" disabled>Download client launcher</button>
@@ -65,13 +77,15 @@
       <button id="dl" class="ghost" disabled>Download ROM module</button>
       <button id="install" class="ghost" disabled>Download Studio ROM installer</button>
     </div></details>
+    </details>
     <div role="status" aria-live="polite" id="status" style="margin-top:12px;color:var(--dim)"></div>
   </div>
 
   <div class="panel">
     <h2>03 / Press play</h2>
     <ol>
-      <li><b>Download client launcher</b> after Generate. Open the downloaded <code>Depth-game.luau</code> as text.</li>
+      <li><b>Small launcher:</b> move <code>Depth-ROM.gba</code> into your loader's workspace, then Copy small launcher and execute it. It needs <code>readfile</code>, HTTP and <code>loadstring</code>.</li>
+      <li><b>Embedded alternative:</b> Download client launcher after Generate. Open the downloaded <code>Depth-game.luau</code> as text.</li>
       <li>In a fresh Roblox client session, run the <b>entire file</b> with your client script loader. This launches Depth with your ROM already loaded. Do not launch the empty Depth script first.</li>
       <li>The loader must support <code>game:HttpGet</code> and <code>loadstring</code>. The launcher fetches Depth's runtime from GitHub; your ROM stays in the local script. Large files may exceed your loader's limits.</li>
       <li><b>Small ROM alternative:</b> Copy base64, then Depth → Library → Load pasted ROM. The paste box supports at most 200,000 base64 characters (about 146 KiB of ROM data).</li>
@@ -84,7 +98,7 @@
     <h2 id="privacy-title">Whose ROM is it?</h2>
     <p>Yours stays in your browser tab. Each visitor chooses a file from their own device;
     there is no shared ROM library, account lookup, or upload.</p>
-    <p class="sub" style="margin:0">The downloaded launcher contains only the ROM you selected.
+    <p class="sub" style="margin:0">The embedded launcher contains the ROM you selected. The small launcher reads only your local <code>Depth-ROM.gba</code> file.
     Reloading the page clears its selection; downloaded files remain on your device.
     To play on another device, transfer your launcher yourself. GitHub serves this page
     and may log normal page requests; the helper does not send it your ROM.</p>
@@ -125,6 +139,7 @@ function load(u8, fileName) {
   b64 = null; bytes = null; window.__romluau = null; window.__rominstaller = null; window.__romclient = null; preview.value = ""; infoEl.innerHTML = "";
   document.getElementById("install").disabled = true;
   document.getElementById("client").disabled = true;
+  document.getElementById("raw").disabled = true;
   document.getElementById("dl").disabled = true;
   document.getElementById("copy").disabled = true;
   document.getElementById("gen").disabled = true;
@@ -141,6 +156,7 @@ function load(u8, fileName) {
     <tr><td>ROM size</td><td>${(h.declaredSize/1024).toFixed(0)} KiB</td></tr>
   </table>`;
   document.getElementById('gen').disabled = false;
+  document.getElementById('raw').disabled = false;
   statusEl.textContent = 'ready';
 }
 
@@ -240,6 +256,15 @@ document.getElementById('gen').addEventListener('click', () => {
   statusEl.innerHTML = `generated <b>${out.length.toLocaleString()}</b> characters in ${chunks.length} chunks <span class="ok">(ok)</span>`;
   document.getElementById('dl').disabled = false;
   document.getElementById('copy').disabled = false;
+});
+
+const smallLauncher = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/Underdog239/Depth-/coderabbit/explain-code-limit/230c69a5/installer/Depth-file-launcher.luau"))()';
+document.getElementById('small').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(smallLauncher); statusEl.textContent = 'Small launcher copied. Place Depth-ROM.gba in your loader workspace, then execute in a fresh session.'; }
+  catch { preview.value = smallLauncher; preview.select(); statusEl.textContent = 'Clipboard blocked. The small launcher is selected in Preview; copy it manually.'; }
+});
+document.getElementById('raw').addEventListener('click', () => {
+  if (bytes) download(bytes, 'Depth-ROM.gba');
 });
 
 document.getElementById('client').addEventListener('click', () => {

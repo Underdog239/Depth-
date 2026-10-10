@@ -5,6 +5,31 @@ Start with **Run demo** to check your setup without finding a ROM. For your own
 game, use a homebrew ROM or a backup you have permission to use. Extract ZIP
 archives before choosing a file.
 
+## Small launcher for large ROMs
+
+If the embedded `Depth-game.luau` is too large to paste, use your loader's local
+file support. This needs `readfile`, `game:HttpGet`, `loadstring` and Roblox buffers.
+Ordinary Roblox LocalScripts cannot read device files.
+
+1. In the helper, choose your `.gba` and click **Download Depth-ROM.gba**.
+2. Move that file into your **script loader's workspace folder**, keeping the
+   name `Depth-ROM.gba`. Downloading it alone does not move it into this folder.
+   The workspace location depends on the loader; mobile file access may be limited.
+3. Click **Copy small launcher**, rejoin Roblox and execute that short line first.
+
+The launcher reads the raw ROM file directly. Its copied code stays the same size
+regardless of the ROM size; no base64 expansion or game data is pasted into the
+script editor. The game is still held in emulator memory, up to 32 MiB.
+If `readfile` is unavailable, use your loader's **open/import script file** feature
+for the existing embedded launcher, or the Studio/Rojo method below. A static
+website cannot provide local file access to a loader that lacks it.
+
+To use another workspace filename, call the launcher with that path:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Underdog239/Depth-/coderabbit/explain-code-limit/230c69a5/installer/Depth-file-launcher.luau"))("MyGame.gba")
+```
+
 ## Client launcher — no Studio installation
 
 1. Open your deployed GitHub Pages ROM helper (see [hosting setup](GITHUB_PAGES.md)),
