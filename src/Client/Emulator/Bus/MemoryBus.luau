@@ -15,6 +15,9 @@
 
 local Regions = require(script.Parent.Regions)
 
+local band, bor, bxor, bnot = bit32.band, bit32.bor, bit32.bxor, bit32.bnot
+local lshift, rshift, arshift, rrotate = bit32.lshift, bit32.rshift, bit32.arshift, bit32.rrotate
+
 local MemoryBus = {}
 MemoryBus.__index = MemoryBus
 
@@ -56,21 +59,21 @@ end
 function MemoryBus:read8(addr: number): number
 	local top = addr // 0x1000000
 	if top <= 0x01 then
-		return self.bios[bit32.band(addr, Regions.BIOS_MASK) + 1] or 0
+		return self.bios[band(addr, Regions.BIOS_MASK) + 1] or 0
 	elseif top == 0x02 then
-		return self.ewram[bit32.band(addr, Regions.EWRAM_MASK) + 1] or 0
+		return self.ewram[band(addr, Regions.EWRAM_MASK) + 1] or 0
 	elseif top == 0x03 then
-		return self.iwram[bit32.band(addr, Regions.IWRAM_MASK) + 1] or 0
+		return self.iwram[band(addr, Regions.IWRAM_MASK) + 1] or 0
 	elseif top == 0x04 then
-		return bit32.band(self:readIO16(bit32.band(addr, 0x3FE)), 0xFF)
+		return band(self:readIO16(band(addr, 0x3FE)), 0xFF)
 	elseif top == 0x05 then
-		return self.pal[bit32.band(addr, Regions.PAL_MASK) + 1] or 0
+		return self.pal[band(addr, Regions.PAL_MASK) + 1] or 0
 	elseif top == 0x06 then
 		return self.vram[Regions.vramOffset(addr) + 1] or 0
 	elseif top == 0x07 then
-		return self.oam[bit32.band(addr, Regions.OAM_MASK) + 1] or 0
+		return self.oam[band(addr, Regions.OAM_MASK) + 1] or 0
 	elseif top <= 0x0D then
-		return self.cart and self.cart:read8(bit32.band(addr, 0x1FFFFFF)) or 0
+		return self.cart and self.cart:read8(band(addr, 0x1FFFFFF)) or 0
 	else
 		-- SRAM / Flash: 8-bit only, handled by the save backend's state machine.
 		if self.cart and self.cart.backend then
@@ -86,10 +89,10 @@ function MemoryBus:read16(addr: number): number
 	-- path instead of two full region dispatches.
 	if top >= 0x08 and top <= 0x0D then
 		local cart = self.cart
-		if cart then return cart:read16(bit32.band(addr, 0x1FFFFFF)) end
+		if cart then return cart:read16(band(addr, 0x1FFFFFF)) end
 		return 0
 	end
-	if top == 0x04 then return self:readIO16(bit32.band(addr, 0x3FE)) end
+	if top == 0x04 then return self:readIO16(band(addr, 0x3FE)) end
 	local a0 = self:read8(addr)
 	local a1 = self:read8(addr + 1)
 	return a0 + a1 * 0x100
@@ -99,12 +102,12 @@ function MemoryBus:read32(addr: number): number
 	local top = addr // 0x1000000
 	if top >= 0x08 and top <= 0x0D then
 		local cart = self.cart
-		if cart then return cart:read32(bit32.band(addr, 0x1FFFFFF)) end
+		if cart then return cart:read32(band(addr, 0x1FFFFFF)) end
 		return 0
 	end
 	if top == 0x04 then
 		-- Most IO registers are 16-bit; upper half reads as zero on the GBA.
-		return self:readIO16(bit32.band(addr, 0x3FE))
+		return self:readIO16(band(addr, 0x3FE))
 	end
 	local a0 = self:read8(addr)
 	local a1 = self:read8(addr + 1)
@@ -117,28 +120,28 @@ end
 
 function MemoryBus:write8(addr: number, value: number)
 	local top = addr // 0x1000000
-	value = bit32.band(value, 0xFF)
+	value = band(value, 0xFF)
 	if top <= 0x01 then
 		return -- BIOS is read-only
 	elseif top == 0x02 then
-		self.ewram[bit32.band(addr, Regions.EWRAM_MASK) + 1] = value
+		self.ewram[band(addr, Regions.EWRAM_MASK) + 1] = value
 	elseif top == 0x03 then
-		self.iwram[bit32.band(addr, Regions.IWRAM_MASK) + 1] = value
+		self.iwram[band(addr, Regions.IWRAM_MASK) + 1] = value
 	elseif top == 0x04 then
-		local off = bit32.band(addr, 0x3FE)
+		local off = band(addr, 0x3FE)
 		local cur = self:readIO16(off)
 		if addr % 2 == 0 then
-			self:writeIO16(off, bit32.bor(bit32.band(cur, 0xFF00), value))
+			self:writeIO16(off, bor(band(cur, 0xFF00), value))
 		else
-			self:writeIO16(off, bit32.bor(bit32.band(cur, 0x00FF), bit32.lshift(value, 8)))
+			self:writeIO16(off, bor(band(cur, 0x00FF), lshift(value, 8)))
 		end
 	elseif top == 0x05 then
-		self.pal[bit32.band(addr, Regions.PAL_MASK) + 1] = value
+		self.pal[band(addr, Regions.PAL_MASK) + 1] = value
 	elseif top == 0x06 then
 		-- 8-bit writes to VRAM are ignored on real hardware
 		return
 	elseif top == 0x07 then
-		self.oam[bit32.band(addr, Regions.OAM_MASK) + 1] = value
+		self.oam[band(addr, Regions.OAM_MASK) + 1] = value
 	elseif top <= 0x0D then
 		return -- ROM read-only
 	else
@@ -150,38 +153,38 @@ end
 
 function MemoryBus:write16(addr: number, value: number)
 	local top = addr // 0x1000000
-	if top == 0x04 then return self:writeIO16(bit32.band(addr, 0x3FE), value) end
+	if top == 0x04 then return self:writeIO16(band(addr, 0x3FE), value) end
 	if top == 0x06 then
 		-- VRAM: only aligned 16-bit writes land
 		local off = Regions.vramOffset(addr)
-		self.vram[off + 1] = bit32.band(value, 0xFF)
-		self.vram[off + 2] = bit32.band(value // 0x100, 0xFF)
+		self.vram[off + 1] = band(value, 0xFF)
+		self.vram[off + 2] = band(value // 0x100, 0xFF)
 		return
 	end
-	self:write8(addr, bit32.band(value, 0xFF))
-	self:write8(addr + 1, bit32.band(value // 0x100, 0xFF))
+	self:write8(addr, band(value, 0xFF))
+	self:write8(addr + 1, band(value // 0x100, 0xFF))
 end
 
 function MemoryBus:write32(addr: number, value: number)
 	local top = addr // 0x1000000
 	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
-		self:writeIO16(bit32.band(addr, 0x3FE), bit32.band(value, 0xFFFF))
+		self:writeIO16(band(addr, 0x3FE), band(value, 0xFFFF))
 		return
 	end
 	if top == 0x06 then
-		self:write16(addr, bit32.band(value, 0xFFFF))
-		self:write16(addr + 2, bit32.band(value // 0x10000, 0xFFFF))
+		self:write16(addr, band(value, 0xFFFF))
+		self:write16(addr + 2, band(value // 0x10000, 0xFFFF))
 		return
 	end
-	self:write16(addr, bit32.band(value, 0xFFFF))
-	self:write16(addr + 2, bit32.band(value // 0x10000, 0xFFFF))
+	self:write16(addr, band(value, 0xFFFF))
+	self:write16(addr + 2, band(value // 0x10000, 0xFFFF))
 end
 
 -- IO routing ----------------------------------------------------------------
 
 function MemoryBus:readIO16(off: number): number
-	off = bit32.band(off, 0x3FE)
+	off = band(off, 0x3FE)
 	if off <= 0x056 then
 		if self.ppu then return self.ppu:read16(off) end
 		return 0
@@ -205,8 +208,8 @@ function MemoryBus:readIO16(off: number): number
 end
 
 function MemoryBus:writeIO16(off: number, value: number)
-	off = bit32.band(off, 0x3FE)
-	value = bit32.band(value, 0xFFFF)
+	off = band(off, 0x3FE)
+	value = band(value, 0xFFFF)
 	if off <= 0x056 then
 		if self.ppu then self.ppu:write16(off, value) end
 	elseif off >= 0x060 and off <= 0x0AF then

@@ -19,6 +19,9 @@ local MODE_ABT = 0x17
 local MODE_UND = 0x1B
 local MODE_SYS = 0x1F
 
+local band, bor, bxor, bnot = bit32.band, bit32.bor, bit32.bxor, bit32.bnot
+local lshift, rshift, arshift, rrotate = bit32.lshift, bit32.rshift, bit32.arshift, bit32.rrotate
+
 local CPU = {}
 CPU.__index = CPU
 
@@ -112,44 +115,44 @@ function CPU:_setMode(newMode: number)
 end
 
 function CPU:setCPSR(value: number)
-	self.n = bit32.band(value, 0x80000000) ~= 0
-	self.z = bit32.band(value, 0x40000000) ~= 0
-	self.c = bit32.band(value, 0x20000000) ~= 0
-	self.v = bit32.band(value, 0x10000000) ~= 0
-	self.irqDisable = bit32.band(value, 0x80) ~= 0
-	self.fiqDisable = bit32.band(value, 0x40) ~= 0
-	self.thumb = bit32.band(value, 0x20) ~= 0
-	local mode = bit32.band(value, 0x1F)
+	self.n = band(value, 0x80000000) ~= 0
+	self.z = band(value, 0x40000000) ~= 0
+	self.c = band(value, 0x20000000) ~= 0
+	self.v = band(value, 0x10000000) ~= 0
+	self.irqDisable = band(value, 0x80) ~= 0
+	self.fiqDisable = band(value, 0x40) ~= 0
+	self.thumb = band(value, 0x20) ~= 0
+	local mode = band(value, 0x1F)
 	if mode ~= self.mode then self:_setMode(mode) end
 end
 
 function CPU:cpsr(): number
 	local v = self.mode
-	if self.thumb then v = bit32.bor(v, 0x20) end
-	if self.fiqDisable then v = bit32.bor(v, 0x40) end
-	if self.irqDisable then v = bit32.bor(v, 0x80) end
-	if self.n then v = bit32.bor(v, 0x80000000) end
-	if self.z then v = bit32.bor(v, 0x40000000) end
-	if self.c then v = bit32.bor(v, 0x20000000) end
-	if self.v then v = bit32.bor(v, 0x10000000) end
+	if self.thumb then v = bor(v, 0x20) end
+	if self.fiqDisable then v = bor(v, 0x40) end
+	if self.irqDisable then v = bor(v, 0x80) end
+	if self.n then v = bor(v, 0x80000000) end
+	if self.z then v = bor(v, 0x40000000) end
+	if self.c then v = bor(v, 0x20000000) end
+	if self.v then v = bor(v, 0x10000000) end
 	return v
 end
 
 -- Flags ---------------------------------------------------------------------
 
 local function setNZ(cpu, value: number)
-	local v = bit32.band(value, 0xFFFFFFFF)
+	local v = band(value, 0xFFFFFFFF)
 	cpu.z = (v == 0)
-	cpu.n = bit32.band(v, 0x80000000) ~= 0
+	cpu.n = band(v, 0x80000000) ~= 0
 end
 
 local function addWithCarry(cpu, a: number, b: number, carryIn: number): number
 	local r = a + b + carryIn
 	local res = r % 0x100000000
 	cpu.c = r > 0xFFFFFFFF
-	local sa = bit32.band(a, 0x80000000) ~= 0
-	local sb = bit32.band(b, 0x80000000) ~= 0
-	local sr = bit32.band(res, 0x80000000) ~= 0
+	local sa = band(a, 0x80000000) ~= 0
+	local sb = band(b, 0x80000000) ~= 0
+	local sr = band(res, 0x80000000) ~= 0
 	cpu.v = (sa == sb) and (sa ~= sr)
 	setNZ(cpu, res)
 	return res
@@ -159,9 +162,9 @@ local function subWithCarry(cpu, a: number, b: number, carryIn: number): number
 	local r = a - b - (1 - carryIn)
 	local res = r % 0x100000000
 	cpu.c = r >= 0
-	local sa = bit32.band(a, 0x80000000) ~= 0
-	local sb = bit32.band(b, 0x80000000) ~= 0
-	local sr = bit32.band(res, 0x80000000) ~= 0
+	local sa = band(a, 0x80000000) ~= 0
+	local sb = band(b, 0x80000000) ~= 0
+	local sr = band(res, 0x80000000) ~= 0
 	cpu.v = (sa ~= sb) and (sa ~= sr)
 	setNZ(cpu, res)
 	return res
@@ -195,16 +198,16 @@ end
 local function shiftOperand(cpu, value: number, type: number, amount: number, byRegister: boolean, regValue: number): number
 	local carry = cpu.c
 	if byRegister then
-		if bit32.band(regValue, 0xFF) == 0 then return value end
-		amount = bit32.band(regValue, 0xFF)
+		if band(regValue, 0xFF) == 0 then return value end
+		amount = band(regValue, 0xFF)
 	end
 	if type == 0 then -- LSL
 		if amount == 0 then return value end
 		if amount < 32 then
-			carry = bit32.band(bit32.rshift(value, 32 - amount), 1) ~= 0
-			return bit32.lshift(value, amount) % 0x100000000
+			carry = band(rshift(value, 32 - amount), 1) ~= 0
+			return lshift(value, amount) % 0x100000000
 		elseif amount == 32 then
-			carry = bit32.band(value, 1) ~= 0
+			carry = band(value, 1) ~= 0
 			return 0
 		else
 			carry = false
@@ -213,16 +216,16 @@ local function shiftOperand(cpu, value: number, type: number, amount: number, by
 	elseif type == 1 then -- LSR
 		if amount == 0 then
 			if not byRegister then
-				carry = bit32.band(value, 0x80000000) ~= 0
+				carry = band(value, 0x80000000) ~= 0
 				return 0
 			end
 			return value
 		end
 		if amount < 32 then
-			carry = bit32.band(bit32.rshift(value, amount - 1), 1) ~= 0
-			return bit32.rshift(value, amount)
+			carry = band(rshift(value, amount - 1), 1) ~= 0
+			return rshift(value, amount)
 		elseif amount == 32 then
-			carry = bit32.band(value, 0x80000000) ~= 0
+			carry = band(value, 0x80000000) ~= 0
 			return 0
 		else
 			carry = false
@@ -230,21 +233,21 @@ local function shiftOperand(cpu, value: number, type: number, amount: number, by
 		end
 	elseif type == 2 then -- ASR
 		if amount == 0 or amount >= 32 then
-			local sign = bit32.band(value, 0x80000000) ~= 0
+			local sign = band(value, 0x80000000) ~= 0
 			carry = sign
 			return sign and 0xFFFFFFFF or 0
 		end
-		carry = bit32.band(bit32.rshift(value, amount - 1), 1) ~= 0
-		return bit32.arshift(value, amount) % 0x100000000
+		carry = band(rshift(value, amount - 1), 1) ~= 0
+		return arshift(value, amount) % 0x100000000
 	else -- ROR
 		if amount == 0 then return value end
 		amount %= 32
 		if amount == 0 then
-			carry = bit32.band(value, 0x80000000) ~= 0
+			carry = band(value, 0x80000000) ~= 0
 			return value
 		end
-		local r = bit32.rrotate(value, amount)
-		carry = bit32.band(r, 0x80000000) ~= 0
+		local r = rrotate(value, amount)
+		carry = band(r, 0x80000000) ~= 0
 		return r
 	end
 end
@@ -257,46 +260,45 @@ CPU._setNZ = setNZ
 -- Memory access helpers -----------------------------------------------------
 
 function CPU:readWord(addr: number): number
-	return self.bus:read32(bit32.band(addr, 0xFFFFFFF))
+	return self.bus:read32(band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeWord(addr: number, value: number)
-	self.bus:write32(bit32.band(addr, 0xFFFFFFF), value)
+	self.bus:write32(band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readHalf(addr: number): number
-	return self.bus:read16(bit32.band(addr, 0xFFFFFFF))
+	return self.bus:read16(band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeHalf(addr: number, value: number)
-	self.bus:write16(bit32.band(addr, 0xFFFFFFF), value)
+	self.bus:write16(band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readByte(addr: number): number
-	return self.bus:read8(bit32.band(addr, 0xFFFFFFF))
+	return self.bus:read8(band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeByte(addr: number, value: number)
-	self.bus:write8(bit32.band(addr, 0xFFFFFFF), value)
+	self.bus:write8(band(addr, 0xFFFFFFF), value)
 end
 
---- Read a register; R15 reads as PC + pipeline offset.
-function CPU:reg(i: number): number
-	-- Register numbers are 0-based; R15 is the program counter and reads as
-	-- address+8 (ARM) or address+4 (THUMB).
+-- Register access as plain functions rather than methods: the decoder calls
+-- these several times per instruction, and a method call costs a metatable
+-- lookup on top of the call itself.
+local function getReg(cpu: any, i: number): number
 	if i == 15 then
-		if self.thumb then return self.regs[16] + 2 end
-		return self.regs[16] + 4
+		if cpu.thumb then return cpu.regs[16] + 2 end
+		return cpu.regs[16] + 4
 	end
-	return self.regs[i + 1]
+	return cpu.regs[i + 1]
 end
 
---- Write a register. Writing R15 is a branch.
-function CPU:setReg(i: number, value: number)
+local function putReg(cpu: any, i: number, value: number)
 	if i == 15 then
-		self:branch(value)
+		cpu:branch(value)
 	else
-		self.regs[i + 1] = value % 0x100000000
+		cpu.regs[i + 1] = value % 0x100000000
 	end
 end
 
@@ -304,8 +306,8 @@ end
 function CPU:branch(target: number, fromThumbSwitch: boolean?)
 	target = target % 0x100000000
 	if fromThumbSwitch then
-		self.thumb = bit32.band(target, 1) ~= 0
-		target = bit32.band(target, 0xFFFFFFFE)
+		self.thumb = band(target, 1) ~= 0
+		target = band(target, 0xFFFFFFFE)
 	end
 	self.regs[16] = target % 0x10000000
 end
@@ -350,7 +352,7 @@ end
 local function ror(value: number, amount: number): number
 	amount %= 32
 	if amount == 0 then return value end
-	return bit32.rrotate(value, amount)
+	return rrotate(value, amount)
 end
 
 function CPU:executeARM(op: number): number
@@ -377,34 +379,34 @@ function CPU:executeARM(op: number): number
 			local rn = (op // 0x1000) % 16
 			local rs = (op // 0x100) % 16
 			local rm = op % 16
-			local result = (self:reg(rm) * self:reg(rs)) % 0x100000000
-			if mtype == 1 then result = (result + self:reg(rn)) % 0x100000000 end
-			self:setReg(rd, result)
-			if bit32.band(op, 0x100000) ~= 0 then setNZ(self, result) end
+			local result = (getReg(self, rm) * getReg(self, rs)) % 0x100000000
+			if mtype == 1 then result = (result + getReg(self, rn)) % 0x100000000 end
+			putReg(self, rd, result)
+			if band(op, 0x100000) ~= 0 then setNZ(self, result) end
 			return 3
 		elseif mtype >= 2 and mtype <= 5 then
 			local rm = op % 16
 			local rs = (op // 0x100) % 16
 			local rdHi = (op // 0x10000) % 16
 			local rdLo = (op // 0x1000) % 16
-			local a, b = self:reg(rm), self:reg(rs)
+			local a, b = getReg(self, rm), getReg(self, rs)
 			local signed = mtype >= 4
 			local prod
 			if signed then
-				local sa = bit32.band(a, 0x80000000) ~= 0 and a - 0x100000000 or a
-				local sb = bit32.band(b, 0x80000000) ~= 0 and b - 0x100000000 or b
+				local sa = band(a, 0x80000000) ~= 0 and a - 0x100000000 or a
+				local sb = band(b, 0x80000000) ~= 0 and b - 0x100000000 or b
 				prod = sa * sb
 			else
 				prod = a * b
 			end
-			if mtype == 3 or mtype == 5 then prod += self:reg(rdHi) * 0x100000000 + self:reg(rdLo) end
+			if mtype == 3 or mtype == 5 then prod += getReg(self, rdHi) * 0x100000000 + getReg(self, rdLo) end
 			local lo = prod % 0x100000000
 			local hi = math.floor(prod / 0x100000000) % 0x100000000
-			self:setReg(rdLo, lo)
-			self:setReg(rdHi, hi)
-			if bit32.band(op, 0x100000) ~= 0 then
+			putReg(self, rdLo, lo)
+			putReg(self, rdHi, hi)
+			if band(op, 0x100000) ~= 0 then
 				setNZ(self, lo)
-				self.n = bit32.band(hi, 0x80000000) ~= 0
+				self.n = band(hi, 0x80000000) ~= 0
 			end
 			return 4
 		end
@@ -417,12 +419,12 @@ function CPU:executeARM(op: number): number
 		local rm = op % 16
 		local rd = (op // 0x1000) % 16
 		local rn = (op // 0x10000) % 16
-		local byte = bit32.band(op, 0x400000) ~= 0
-		local addr = self:reg(rn)
+		local byte = band(op, 0x400000) ~= 0
+		local addr = getReg(self, rn)
 		local value = byte and self:readByte(addr) or self:readWord(addr)
-		local src = self:reg(rm)
+		local src = getReg(self, rm)
 		if byte then self:writeByte(addr, src % 0x100) else self:writeWord(addr, src) end
-		self:setReg(rd, value)
+		putReg(self, rd, value)
 		return 4
 	end
 
@@ -430,18 +432,18 @@ function CPU:executeARM(op: number): number
 	if op1 == 0 and (nib == 0xB or nib == 0xD or nib == 0xF) then
 		local rd = (op // 0x1000) % 16
 		local rn = (op // 0x10000) % 16
-		local immediate = bit32.band(op, 0x400000) ~= 0
+		local immediate = band(op, 0x400000) ~= 0
 		local offset
 		if immediate then
-			offset = bit32.bor(bit32.band(op, 0xF), bit32.band(op // 16, 0xF0))
+			offset = bor(band(op, 0xF), band(op // 16, 0xF0))
 		else
-			offset = self:reg(op % 16)
+			offset = getReg(self, op % 16)
 		end
-		local pre = bit32.band(op, 0x1000000) ~= 0
-		local up = bit32.band(op, 0x800000) ~= 0
-		local load = bit32.band(op, 0x100000) ~= 0
-		local writeBack = bit32.band(op, 0x200000) ~= 0 or not pre
-		local base = self:reg(rn)
+		local pre = band(op, 0x1000000) ~= 0
+		local up = band(op, 0x800000) ~= 0
+		local load = band(op, 0x100000) ~= 0
+		local writeBack = band(op, 0x200000) ~= 0 or not pre
+		local base = getReg(self, rn)
 		local wbAddr = up and (base + offset) or (base - offset)
 		local effective = pre and wbAddr or base
 		local value
@@ -450,20 +452,20 @@ function CPU:executeARM(op: number): number
 				value = self:readHalf(effective)
 			elseif nib == 0xD then
 				value = self:readByte(effective)
-				if bit32.band(value, 0x80) ~= 0 then value = value - 0x100 end
+				if band(value, 0x80) ~= 0 then value = value - 0x100 end
 				value = value % 0x100000000
 			else
 				value = self:readHalf(effective)
-				if bit32.band(value, 0x8000) ~= 0 then value = value - 0x10000 end
+				if band(value, 0x8000) ~= 0 then value = value - 0x10000 end
 				value = value % 0x100000000
 			end
 		else
-			value = self:reg(rd)
+			value = getReg(self, rd)
 			if nib == 0xB then self:writeHalf(effective, value % 0x10000)
 			else self:writeByte(effective, value % 0x100) end
 		end
-		if writeBack then self:setReg(rn, wbAddr) end
-		if load then self:setReg(rd, value) end
+		if writeBack then putReg(self, rn, wbAddr) end
+		if load then putReg(self, rd, value) end
 		return 3
 	end
 
@@ -478,48 +480,48 @@ function CPU:executeARM(op: number): number
 			local imm = op % 0x100
 			local rot = ((op // 0x100) % 16) * 2
 			operand2 = ror(imm, rot)
-			if rot ~= 0 then shifterCarry = bit32.band(operand2, 0x80000000) ~= 0 end
+			if rot ~= 0 then shifterCarry = band(operand2, 0x80000000) ~= 0 end
 		else
 			local rm = op % 16
 			local shiftType = (op // 0x20) % 4
-			if bit32.band(op, 0x10) ~= 0 then
+			if band(op, 0x10) ~= 0 then
 				local rs = (op // 0x100) % 16
-				local amount = self:reg(rs) % 256
+				local amount = getReg(self, rs) % 256
 				if amount == 0 then
-					operand2 = self:reg(rm)
+					operand2 = getReg(self, rm)
 				else
-					operand2 = shiftOperand(self, self:reg(rm), shiftType, 0, true, amount)
+					operand2 = shiftOperand(self, getReg(self, rm), shiftType, 0, true, amount)
 					shifterCarry = self.c
 				end
 			else
 				local amount = (op // 0x80) % 32
 				local oldCarry = self.c
-				operand2 = shiftOperand(self, self:reg(rm), shiftType, amount, false, 0)
+				operand2 = shiftOperand(self, getReg(self, rm), shiftType, amount, false, 0)
 				if amount ~= 0 or shiftType == 2 then shifterCarry = self.c else shifterCarry = oldCarry end
 			end
 		end
 
-		local a = self:reg(rn)
+		local a = getReg(self, rn)
 		local result
 		local writeBack = true
 		local isSub = false
 		local isAdd = false
-		if opcode == 0 then result = bit32.band(a, operand2)
-		elseif opcode == 1 then result = bit32.bxor(a, operand2)
+		if opcode == 0 then result = band(a, operand2)
+		elseif opcode == 1 then result = bxor(a, operand2)
 		elseif opcode == 2 then result = subWithCarry(self, a, operand2, 1); isSub = true
 		elseif opcode == 3 then result = subWithCarry(self, operand2, a, 1); isSub = true
 		elseif opcode == 4 then result = addWithCarry(self, a, operand2, 0); isAdd = true
 		elseif opcode == 5 then result = addWithCarry(self, a, operand2, self.c and 1 or 0); isAdd = true
 		elseif opcode == 6 then result = subWithCarry(self, a, operand2, self.c and 1 or 0); isSub = true
 		elseif opcode == 7 then result = subWithCarry(self, operand2, a, self.c and 1 or 0); isSub = true
-		elseif opcode == 8 then result = bit32.band(a, operand2); writeBack = false
-		elseif opcode == 9 then result = bit32.bxor(a, operand2); writeBack = false
+		elseif opcode == 8 then result = band(a, operand2); writeBack = false
+		elseif opcode == 9 then result = bxor(a, operand2); writeBack = false
 		elseif opcode == 10 then result = subWithCarry(self, a, operand2, 1); writeBack = false; isSub = true
 		elseif opcode == 11 then result = addWithCarry(self, a, operand2, 0); writeBack = false; isAdd = true
-		elseif opcode == 12 then result = bit32.bor(a, operand2)
+		elseif opcode == 12 then result = bor(a, operand2)
 		elseif opcode == 13 then result = operand2
-		elseif opcode == 14 then result = bit32.band(a, bit32.bnot(operand2))
-		else result = bit32.bnot(operand2) end
+		elseif opcode == 14 then result = band(a, bnot(operand2))
+		else result = bnot(operand2) end
 		result = result % 0x100000000
 
 		local isTest = opcode >= 8 and opcode <= 11
@@ -527,7 +529,7 @@ function CPU:executeARM(op: number): number
 			setNZ(self, result)
 			if not (isSub or isAdd) then self.c = shifterCarry end
 		end
-		if writeBack then self:setReg(rd, result) end
+		if writeBack then putReg(self, rd, result) end
 		return 1
 	end
 
@@ -539,29 +541,29 @@ function CPU:executeARM2(op: number, op1: number): number
 
 	-- PSR transfers: MRS / MSR (bits 27-24 = 0001, bits 7-4 = 0000)
 	if op1 == 0 and kind == 1 and nib == 0 then
-		local useSPSR = bit32.band(op, 0x400000) ~= 0
+		local useSPSR = band(op, 0x400000) ~= 0
 		local rd = (op // 0x1000) % 16
 		local subOp = (op // 0x100000) % 4
 		if subOp == 0 then
-			self:setReg(rd, useSPSR and self.spsr or self:cpsr())
+			putReg(self, rd, useSPSR and self.spsr or self:cpsr())
 		else
 			local fieldMask = (op // 0x10000) % 16
 			local value
-			if bit32.band(op, 0x2000000) ~= 0 then
+			if band(op, 0x2000000) ~= 0 then
 				value = ror(op % 0x100, ((op // 0x100) % 16) * 2)
 			else
-				value = self:reg(op % 16)
+				value = getReg(self, op % 16)
 			end
 			local mask = 0
-			if bit32.band(fieldMask, 1) ~= 0 then mask = bit32.bor(mask, 0xF0000000) end
-			if bit32.band(fieldMask, 2) ~= 0 then mask = bit32.bor(mask, 0x20) end
-			if bit32.band(fieldMask, 4) ~= 0 then mask = bit32.bor(mask, 0xC0) end
-			if bit32.band(fieldMask, 8) ~= 0 then mask = bit32.bor(mask, 0xFF) end
+			if band(fieldMask, 1) ~= 0 then mask = bor(mask, 0xF0000000) end
+			if band(fieldMask, 2) ~= 0 then mask = bor(mask, 0x20) end
+			if band(fieldMask, 4) ~= 0 then mask = bor(mask, 0xC0) end
+			if band(fieldMask, 8) ~= 0 then mask = bor(mask, 0xFF) end
 			if useSPSR then
-				self.spsr = bit32.bor(bit32.band(self.spsr, bit32.bnot(mask)), bit32.band(value, mask))
+				self.spsr = bor(band(self.spsr, bnot(mask)), band(value, mask))
 			else
 				local cur = self:cpsr()
-				self:setCPSR(bit32.bor(bit32.band(cur, bit32.bnot(mask)), bit32.band(value, mask)))
+				self:setCPSR(bor(band(cur, bnot(mask)), band(value, mask)))
 			end
 		end
 		return 1
@@ -569,20 +571,20 @@ function CPU:executeARM2(op: number, op1: number): number
 
 	-- Single data transfer (immediate or register offset)
 	if op1 == 2 or op1 == 3 then
-		local load = bit32.band(op, 0x100000) ~= 0
-		local byte = bit32.band(op, 0x400000) ~= 0
-		local writeBack = bit32.band(op, 0x200000) ~= 0
-		local pre = bit32.band(op, 0x1000000) ~= 0
-		local up = bit32.band(op, 0x800000) ~= 0
+		local load = band(op, 0x100000) ~= 0
+		local byte = band(op, 0x400000) ~= 0
+		local writeBack = band(op, 0x200000) ~= 0
+		local pre = band(op, 0x1000000) ~= 0
+		local up = band(op, 0x800000) ~= 0
 		local rn = (op // 0x10000) % 16
 		local rd = (op // 0x1000) % 16
 		local offset
 		if op1 == 2 then
 			offset = op % 0x1000
 		else
-			offset = shiftOperand(self, self:reg(op % 16), (op // 0x20) % 4, (op // 0x80) % 32, false, 0)
+			offset = shiftOperand(self, getReg(self, op % 16), (op // 0x20) % 4, (op // 0x80) % 32, false, 0)
 		end
-		local base = self:reg(rn)
+		local base = getReg(self, rn)
 		local addr = up and (base + offset) or (base - offset)
 		local effective = pre and addr or base
 		local value
@@ -590,34 +592,34 @@ function CPU:executeARM2(op: number, op1: number): number
 			if byte then
 				value = self:readByte(effective)
 			else
-				local aligned = bit32.band(effective, 0xFFFFFFFC)
+				local aligned = band(effective, 0xFFFFFFFC)
 				value = self:readWord(aligned)
 				local rot = (effective % 4) * 8
-				if rot ~= 0 then value = bit32.rrotate(value, rot) end
+				if rot ~= 0 then value = rrotate(value, rot) end
 			end
 		else
-			if byte then self:writeByte(effective, self:reg(rd) % 0x100)
-			else self:writeWord(effective, self:reg(rd)) end
+			if byte then self:writeByte(effective, getReg(self, rd) % 0x100)
+			else self:writeWord(effective, getReg(self, rd)) end
 		end
-		if (not pre) or writeBack then self:setReg(rn, addr) end
-		if load then self:setReg(rd, value) end
+		if (not pre) or writeBack then putReg(self, rn, addr) end
+		if load then putReg(self, rd, value) end
 		return 3
 	end
 
 	-- Block data transfer (LDM/STM)
 	if op1 == 4 then
-		local pre = bit32.band(op, 0x1000000) ~= 0
-		local up = bit32.band(op, 0x800000) ~= 0
-		local psr = bit32.band(op, 0x400000) ~= 0
-		local writeBack = bit32.band(op, 0x200000) ~= 0
-		local load = bit32.band(op, 0x100000) ~= 0
+		local pre = band(op, 0x1000000) ~= 0
+		local up = band(op, 0x800000) ~= 0
+		local psr = band(op, 0x400000) ~= 0
+		local writeBack = band(op, 0x200000) ~= 0
+		local load = band(op, 0x100000) ~= 0
 		local rn = (op // 0x10000) % 16
 		local list = op % 0x10000
 		local count = 0
 		for i = 0, 15 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then count += 1 end
+			if band(list, lshift(1, i)) ~= 0 then count += 1 end
 		end
-		local base = self:reg(rn)
+		local base = getReg(self, rn)
 		local start, wb
 		if up then
 			start = pre and (base + 4) or base
@@ -628,7 +630,7 @@ function CPU:executeARM2(op: number, op1: number): number
 		end
 		local addr = start
 		for i = 0, 15 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then
+			if band(list, lshift(1, i)) ~= 0 then
 				if load then
 					local v = self:readWord(addr)
 					if i == 15 then
@@ -643,15 +645,15 @@ function CPU:executeARM2(op: number, op1: number): number
 				addr += 4
 			end
 		end
-		if writeBack then self:setReg(rn, wb) end
+		if writeBack then putReg(self, rn, wb) end
 		return 3 + count
 	end
 
 	-- Branch / branch with link
 	if op1 == 5 then
-		local link = bit32.band(op, 0x1000000) ~= 0
+		local link = band(op, 0x1000000) ~= 0
 		local offset = op % 0x1000000
-		if bit32.band(offset, 0x800000) ~= 0 then offset -= 0x1000000 end
+		if band(offset, 0x800000) ~= 0 then offset -= 0x1000000 end
 		local next = self.regs[16]
 		if link then self.regs[15] = next end
 		self.regs[16] = (next + 4 + offset * 4) % 0x10000000
@@ -722,22 +724,22 @@ function CPU:executeTHUMB(op: number): number
 		local b = self.regs[rs + 1]
 		local result
 		local testOnly = false
-		if opc == 0 then result = bit32.band(a, b)
-		elseif opc == 1 then result = bit32.bxor(a, b)
+		if opc == 0 then result = band(a, b)
+		elseif opc == 1 then result = bxor(a, b)
 		elseif opc == 2 then result = shiftOperand(self, a, 0, b % 256, true, b)
 		elseif opc == 3 then result = shiftOperand(self, a, 1, b % 256, true, b)
 		elseif opc == 4 then result = shiftOperand(self, a, 2, b % 256, true, b)
 		elseif opc == 5 then result = addWithCarry(self, a, b, self.c and 1 or 0)
 		elseif opc == 6 then result = subWithCarry(self, a, b, self.c and 1 or 0)
 		elseif opc == 7 then result = shiftOperand(self, a, 3, b % 256, true, b)
-		elseif opc == 8 then result = bit32.band(a, b); testOnly = true
+		elseif opc == 8 then result = band(a, b); testOnly = true
 		elseif opc == 9 then result = subWithCarry(self, 0, b, 1)
 		elseif opc == 10 then result = subWithCarry(self, a, b, 1); testOnly = true
 		elseif opc == 11 then result = addWithCarry(self, a, b, 0); testOnly = true
-		elseif opc == 12 then result = bit32.bor(a, b)
+		elseif opc == 12 then result = bor(a, b)
 		elseif opc == 13 then result = (a * b) % 0x100000000
-		elseif opc == 14 then result = bit32.band(a, bit32.bnot(b))
-		else result = bit32.bnot(b) end
+		elseif opc == 14 then result = band(a, bnot(b))
+		else result = bnot(b) end
 		result = result % 0x100000000
 		if testOnly then
 			setNZ(self, result)
@@ -757,17 +759,17 @@ function CPU:executeTHUMB(op: number): number
 		local rs = (op // 8) % 8 + h2 * 8
 		local rd = op % 8 + h1 * 8
 		if opc == 3 then
-			self:branch(self:reg(rs), true)
+			self:branch(getReg(self, rs), true)
 			return 3
 		end
-		local a = self:reg(rd)
-		local b = self:reg(rs)
+		local a = getReg(self, rd)
+		local b = getReg(self, rs)
 		if opc == 0 then
-			self:setReg(rd, addWithCarry(self, a, b, 0))
+			putReg(self, rd, addWithCarry(self, a, b, 0))
 		elseif opc == 1 then
 			subWithCarry(self, a, b, 1)
 		elseif opc == 2 then
-			self:setReg(rd, b)
+			putReg(self, rd, b)
 		end
 		return 1
 	end
@@ -776,7 +778,7 @@ function CPU:executeTHUMB(op: number): number
 	if top == 0x4 and (op // 0x400) % 4 >= 2 then
 		local rd = (op // 0x100) % 8
 		local imm = (op % 0x100) * 4
-		local pc = bit32.band(self.regs[16] + 2, 0xFFFFFFFC)
+		local pc = band(self.regs[16] + 2, 0xFFFFFFFC)
 		self.regs[rd + 1] = self:readWord(pc + imm)
 		return 3
 	end
@@ -793,14 +795,14 @@ function CPU:executeTHUMB(op: number): number
 		elseif opc == 2 then self:writeByte(addr, self.regs[rd + 1] % 0x100)
 		elseif opc == 3 then
 			local v = self:readByte(addr)
-			if bit32.band(v, 0x80) ~= 0 then v -= 0x100 end
+			if band(v, 0x80) ~= 0 then v -= 0x100 end
 			self.regs[rd + 1] = v % 0x100000000
 		elseif opc == 4 then self.regs[rd + 1] = self:readWord(addr)
 		elseif opc == 5 then self.regs[rd + 1] = self:readHalf(addr)
 		elseif opc == 6 then self.regs[rd + 1] = self:readByte(addr)
 		else
 			local v = self:readHalf(addr)
-			if bit32.band(v, 0x8000) ~= 0 then v -= 0x10000 end
+			if band(v, 0x8000) ~= 0 then v -= 0x10000 end
 			self.regs[rd + 1] = v % 0x100000000
 		end
 		return 3
@@ -808,8 +810,8 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 9: immediate offset word/byte ------------------------------------
 	if top >= 0x6 and top <= 0x7 then
-		local byte = bit32.band(op, 0x1000) ~= 0
-		local load = bit32.band(op, 0x800) ~= 0
+		local byte = band(op, 0x1000) ~= 0
+		local load = band(op, 0x800) ~= 0
 		local offset = (op // 0x40) % 32
 		local rb = (op // 8) % 8
 		local rd = op % 8
@@ -826,7 +828,7 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 10: halfword immediate offset ------------------------------------
 	if top == 0x8 then
-		local load = bit32.band(op, 0x800) ~= 0
+		local load = band(op, 0x800) ~= 0
 		local offset = ((op // 0x40) % 32) * 2
 		local rb = (op // 8) % 8
 		local rd = op % 8
@@ -838,7 +840,7 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 11: SP-relative load/store ---------------------------------------
 	if top == 0x9 then
-		local load = bit32.band(op, 0x800) ~= 0
+		local load = band(op, 0x800) ~= 0
 		local rd = (op // 0x100) % 8
 		local imm = (op % 0x100) * 4
 		local addr = self.regs[14] + imm
@@ -849,13 +851,13 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 12: load address --------------------------------------------------
 	if top == 0xA then
-		local useSP = bit32.band(op, 0x800) ~= 0
+		local useSP = band(op, 0x800) ~= 0
 		local rd = (op // 0x100) % 8
 		local imm = (op % 0x100) * 4
 		if useSP then
 			self.regs[rd + 1] = (self.regs[14] + imm) % 0x100000000
 		else
-			local pc = bit32.band(self.regs[16] + 2, 0xFFFFFFFC)
+			local pc = band(self.regs[16] + 2, 0xFFFFFFFC)
 			self.regs[rd + 1] = (pc + imm) % 0x100000000
 		end
 		return 1
@@ -863,7 +865,7 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 13: add offset to stack pointer -----------------------------------
 	if (op // 0x100) == 0xB0 then
-		local sub = bit32.band(op, 0x80) ~= 0
+		local sub = band(op, 0x80) ~= 0
 		local imm = (op % 0x80) * 4
 		if sub then self.regs[14] = (self.regs[14] - imm) % 0x100000000
 		else self.regs[14] = (self.regs[14] + imm) % 0x100000000 end
@@ -873,16 +875,16 @@ function CPU:executeTHUMB(op: number): number
 	-- Format 14: push/pop ------------------------------------------------------
 	local hi = op // 0x100
 	if hi == 0xB4 or hi == 0xB5 then
-		local r = bit32.band(op, 0x100) ~= 0
+		local r = band(op, 0x100) ~= 0
 		local list = op % 0x100
 		local count = 0
 		for i = 0, 7 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then count += 1 end
+			if band(list, lshift(1, i)) ~= 0 then count += 1 end
 		end
 		if r then count += 1 end
 		local sp = self.regs[14] - 4 * count
 		for i = 0, 7 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then
+			if band(list, lshift(1, i)) ~= 0 then
 				self:writeWord(sp, self.regs[i + 1])
 				sp += 4
 			end
@@ -891,11 +893,11 @@ function CPU:executeTHUMB(op: number): number
 		self.regs[14] = (self.regs[14] - 4 * count) % 0x100000000
 		return 3
 	elseif hi == 0xBC or hi == 0xBD then
-		local r = bit32.band(op, 0x100) ~= 0
+		local r = band(op, 0x100) ~= 0
 		local list = op % 0x100
 		local sp = self.regs[14]
 		for i = 0, 7 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then
+			if band(list, lshift(1, i)) ~= 0 then
 				self.regs[i + 1] = self:readWord(sp)
 				sp += 4
 			end
@@ -903,7 +905,7 @@ function CPU:executeTHUMB(op: number): number
 		if r then
 			local v = self:readWord(sp)
 			sp += 4
-			self.regs[16] = bit32.band(v, 0xFFFFFFFE) % 0x10000000
+			self.regs[16] = band(v, 0xFFFFFFFE) % 0x10000000
 		end
 		self.regs[14] = sp % 0x100000000
 		return 3
@@ -911,13 +913,13 @@ function CPU:executeTHUMB(op: number): number
 
 	-- Format 15: multiple load/store -------------------------------------------
 	if top == 0xC then
-		local load = bit32.band(op, 0x800) ~= 0
+		local load = band(op, 0x800) ~= 0
 		local rb = (op // 0x100) % 8
 		local list = op % 0x100
 		local addr = self.regs[rb + 1]
 		local count = 0
 		for i = 0, 7 do
-			if bit32.band(list, bit32.lshift(1, i)) ~= 0 then
+			if band(list, lshift(1, i)) ~= 0 then
 				if load then self.regs[i + 1] = self:readWord(addr)
 				else self:writeWord(addr, self.regs[i + 1]) end
 				addr += 4
@@ -938,7 +940,7 @@ function CPU:executeTHUMB(op: number): number
 		if cond == 0xE then return 1 end
 		if self:condition(cond) then
 			local off = op % 0x100
-			if bit32.band(off, 0x80) ~= 0 then off -= 0x100 end
+			if band(off, 0x80) ~= 0 then off -= 0x100 end
 			self.regs[16] = (self.regs[16] + 2 + off * 2) % 0x10000000
 			return 3
 		end
@@ -948,7 +950,7 @@ function CPU:executeTHUMB(op: number): number
 	-- Format 17: unconditional branch ------------------------------------------
 	if op // 0x800 == 0x1C then
 		local off = op % 0x800
-		if bit32.band(off, 0x400) ~= 0 then off -= 0x800 end
+		if band(off, 0x400) ~= 0 then off -= 0x800 end
 		self.regs[16] = (self.regs[16] + 2 + off * 2) % 0x10000000
 		return 3
 	end
@@ -957,7 +959,7 @@ function CPU:executeTHUMB(op: number): number
 	local tag = op // 0x800
 	if tag == 0x1E then
 		local off = op % 0x800
-		if bit32.band(off, 0x400) ~= 0 then off -= 0x800 end
+		if band(off, 0x400) ~= 0 then off -= 0x800 end
 		self.regs[15] = (self.regs[16] + 2 + off * 0x1000) % 0x100000000
 		return 1
 	elseif tag == 0x1F then
@@ -981,7 +983,7 @@ function CPU:step(): number
 	-- avoids two method calls on the hot path.
 	if not self.irqDisable then
 		local ints = self.bus.interrupts
-		if ints and ints.ime ~= 0 and bit32.band(ints.ie, ints.if_) ~= 0 then
+		if ints and ints.ime ~= 0 and band(ints.ie, ints.if_) ~= 0 then
 			self:checkIRQ()
 		end
 	end

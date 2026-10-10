@@ -14,6 +14,9 @@ local W, H = 240, 160
 local CYCLES_PER_LINE = 1232
 local LINES_TOTAL = 228
 
+local band, bor, bxor, bnot = bit32.band, bit32.bor, bit32.bxor, bit32.bnot
+local lshift, rshift, arshift, rrotate = bit32.lshift, bit32.rshift, bit32.arshift, bit32.rrotate
+
 local Ppu = {}
 Ppu.__index = Ppu
 Ppu.WIDTH = W
@@ -48,10 +51,10 @@ function Ppu:read16(addr: number): number
 	if addr == 0x000 then return self.dispcnt % 0x10000 end
 	if addr == 0x002 then return self.dispcnt // 0x10000 end
 	if addr == 0x004 then
-		local stat = bit32.band(self.dispstat, 0xFFF8)
-		if self.line >= 160 and self.line < 228 then stat = bit32.bor(stat, 1) end
-		if self.line < 160 and self.dot >= 1006 then stat = bit32.bor(stat, 2) end
-		if self.line == bit32.band(self.dispstat, 0xFF) then stat = bit32.bor(stat, 4) end
+		local stat = band(self.dispstat, 0xFFF8)
+		if self.line >= 160 and self.line < 228 then stat = bor(stat, 1) end
+		if self.line < 160 and self.dot >= 1006 then stat = bor(stat, 2) end
+		if self.line == band(self.dispstat, 0xFF) then stat = bor(stat, 4) end
 		return stat
 	end
 	if addr == 0x006 then return self.line end
@@ -61,22 +64,22 @@ function Ppu:read16(addr: number): number
 		return (addr % 4 == 0) and self.bghofs[i] or self.bgvofs[i]
 	end
 	if addr >= 0x028 and addr <= 0x03F and (addr % 8) >= 8 - 8 + 0 then
-		if addr == 0x028 then return bit32.band(self.bgx[1], 0xFFFF) end
-		if addr == 0x02A then return bit32.band(self.bgx[1] // 0x10000, 0xFFFF) end
-		if addr == 0x02C then return bit32.band(self.bgy[1], 0xFFFF) end
-		if addr == 0x02E then return bit32.band(self.bgy[1] // 0x10000, 0xFFFF) end
-		if addr == 0x038 then return bit32.band(self.bgx[2], 0xFFFF) end
-		if addr == 0x03A then return bit32.band(self.bgx[2] // 0x10000, 0xFFFF) end
-		if addr == 0x03C then return bit32.band(self.bgy[2], 0xFFFF) end
-		if addr == 0x03E then return bit32.band(self.bgy[2] // 0x10000, 0xFFFF) end
+		if addr == 0x028 then return band(self.bgx[1], 0xFFFF) end
+		if addr == 0x02A then return band(self.bgx[1] // 0x10000, 0xFFFF) end
+		if addr == 0x02C then return band(self.bgy[1], 0xFFFF) end
+		if addr == 0x02E then return band(self.bgy[1] // 0x10000, 0xFFFF) end
+		if addr == 0x038 then return band(self.bgx[2], 0xFFFF) end
+		if addr == 0x03A then return band(self.bgx[2] // 0x10000, 0xFFFF) end
+		if addr == 0x03C then return band(self.bgy[2], 0xFFFF) end
+		if addr == 0x03E then return band(self.bgy[2] // 0x10000, 0xFFFF) end
 	end
 	if addr >= 0x020 and addr <= 0x03F then
 		local i = (addr - 0x020) // 8 + 1
 		local reg = (addr - 0x020) % 8
-		if reg == 0 then return bit32.band(self.bgpa[i], 0xFFFF) end
-		if reg == 2 then return bit32.band(self.bgpb[i], 0xFFFF) end
-		if reg == 4 then return bit32.band(self.bgpc[i], 0xFFFF) end
-		if reg == 6 then return bit32.band(self.bgpd[i], 0xFFFF) end
+		if reg == 0 then return band(self.bgpa[i], 0xFFFF) end
+		if reg == 2 then return band(self.bgpb[i], 0xFFFF) end
+		if reg == 4 then return band(self.bgpc[i], 0xFFFF) end
+		if reg == 6 then return band(self.bgpd[i], 0xFFFF) end
 	end
 	if addr >= 0x040 and addr <= 0x04B then
 		local i = (addr - 0x040) // 4 + 1
@@ -90,43 +93,43 @@ function Ppu:read16(addr: number): number
 end
 
 function Ppu:write16(addr: number, value: number)
-	value = bit32.band(value, 0xFFFF)
-	if addr == 0x000 then self.dispcnt = bit32.bor(bit32.band(self.dispcnt, 0xFFFF0000), value)
-	elseif addr == 0x002 then self.dispcnt = bit32.bor(bit32.band(self.dispcnt, 0xFFFF), bit32.lshift(value, 16))
-	elseif addr == 0x004 then self.dispstat = bit32.band(value, 0xFFF8)
+	value = band(value, 0xFFFF)
+	if addr == 0x000 then self.dispcnt = bor(band(self.dispcnt, 0xFFFF0000), value)
+	elseif addr == 0x002 then self.dispcnt = bor(band(self.dispcnt, 0xFFFF), lshift(value, 16))
+	elseif addr == 0x004 then self.dispstat = band(value, 0xFFF8)
 	elseif addr == 0x008 then self.bgcnt[1] = value
 	elseif addr == 0x00A then self.bgcnt[2] = value
 	elseif addr == 0x00C then self.bgcnt[3] = value
 	elseif addr == 0x00E then self.bgcnt[4] = value
 	elseif addr >= 0x010 and addr <= 0x01E then
 		local i = (addr - 0x010) // 4 + 1
-		if addr % 4 == 0 then self.bghofs[i] = bit32.band(value, 0x1FF) else self.bgvofs[i] = bit32.band(value, 0x1FF) end
+		if addr % 4 == 0 then self.bghofs[i] = band(value, 0x1FF) else self.bgvofs[i] = band(value, 0x1FF) end
 	elseif addr == 0x028 then
-		self.bgx[1] = bit32.bor(bit32.band(self.bgx[1], 0xFFFF0000), value)
+		self.bgx[1] = bor(band(self.bgx[1], 0xFFFF0000), value)
 	elseif addr == 0x02A then
-		local hi = bit32.band(value, 0xFFFF) * 0x10000
-		local v = bit32.bor(bit32.band(self.bgx[1], 0xFFFF), hi)
+		local hi = band(value, 0xFFFF) * 0x10000
+		local v = bor(band(self.bgx[1], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgx[1] = v
 	elseif addr == 0x02C then
-		self.bgy[1] = bit32.bor(bit32.band(self.bgy[1], 0xFFFF0000), value)
+		self.bgy[1] = bor(band(self.bgy[1], 0xFFFF0000), value)
 	elseif addr == 0x02E then
-		local hi = bit32.band(value, 0xFFFF) * 0x10000
-		local v = bit32.bor(bit32.band(self.bgy[1], 0xFFFF), hi)
+		local hi = band(value, 0xFFFF) * 0x10000
+		local v = bor(band(self.bgy[1], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgy[1] = v
 	elseif addr == 0x038 then
-		self.bgx[2] = bit32.bor(bit32.band(self.bgx[2], 0xFFFF0000), value)
+		self.bgx[2] = bor(band(self.bgx[2], 0xFFFF0000), value)
 	elseif addr == 0x03A then
-		local hi = bit32.band(value, 0xFFFF) * 0x10000
-		local v = bit32.bor(bit32.band(self.bgx[2], 0xFFFF), hi)
+		local hi = band(value, 0xFFFF) * 0x10000
+		local v = bor(band(self.bgx[2], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgx[2] = v
 	elseif addr == 0x03C then
-		self.bgy[2] = bit32.bor(bit32.band(self.bgy[2], 0xFFFF0000), value)
+		self.bgy[2] = bor(band(self.bgy[2], 0xFFFF0000), value)
 	elseif addr == 0x03E then
-		local hi = bit32.band(value, 0xFFFF) * 0x10000
-		local v = bit32.bor(bit32.band(self.bgy[2], 0xFFFF), hi)
+		local hi = band(value, 0xFFFF) * 0x10000
+		local v = bor(band(self.bgy[2], 0xFFFF), hi)
 		if v >= 0x8000000 then v -= 0x10000000 end
 		self.bgy[2] = v
 	elseif addr >= 0x020 and addr <= 0x03F then
@@ -145,7 +148,7 @@ function Ppu:write16(addr: number, value: number)
 	elseif addr == 0x04C then self.mosaic = value
 	elseif addr == 0x050 then self.bldcnt = value
 	elseif addr == 0x052 then self.bldalpha = value
-	elseif addr == 0x054 then self.bldy = bit32.band(value, 0x1F)
+	elseif addr == 0x054 then self.bldy = band(value, 0x1F)
 	end
 end
 
@@ -171,15 +174,15 @@ function Ppu:_endLine()
 	end
 	local stat = self.dispstat
 	if line < H then
-		if bit32.band(stat, 0x10) ~= 0 then self.interrupts:raise(Interrupts.HBLANK) end
+		if band(stat, 0x10) ~= 0 then self.interrupts:raise(Interrupts.HBLANK) end
 		if self.dma then self.dma:trigger(2) end
 	end
-	if bit32.band(stat, 0xFF) == line and bit32.band(stat, 0x20) ~= 0 then
+	if band(stat, 0xFF) == line and band(stat, 0x20) ~= 0 then
 		self.interrupts:raise(Interrupts.VCOUNT)
 	end
 	self.line += 1
 	if self.line == 160 then
-		if bit32.band(stat, 0x08) ~= 0 then self.interrupts:raise(Interrupts.VBLANK) end
+		if band(stat, 0x08) ~= 0 then self.interrupts:raise(Interrupts.VBLANK) end
 		if self.dma then self.dma:trigger(1) end
 		self.frame += 1
 		self.frameComplete = true
@@ -210,7 +213,7 @@ function Ppu:_oam16(off: number): number
 end
 
 local function expand5(v: number): number
-	return bit32.band(v, 0x1F) * 255 // 31
+	return band(v, 0x1F) * 255 // 31
 end
 
 -- 15-bit RGB -> packed RGBA8, precomputed once. The mapping is a pure function
@@ -262,19 +265,19 @@ end
 
 function Ppu:_renderTextBg(bg: number, y: number, maskArr: { number })
 	local cnt = self.bgcnt[bg]
-	local layerBit = bit32.lshift(1, bg - 1)
-	local prio = bit32.band(cnt, 3)
-	local charBase = bit32.band(cnt // 4, 3) * 0x4000
-	local colors8 = bit32.band(cnt, 0x80) ~= 0
-	local screenBase = bit32.band(cnt // 0x100, 0x1F) * 0x800
-	local size = bit32.band(cnt // 0x4000, 3)
+	local layerBit = lshift(1, bg - 1)
+	local prio = band(cnt, 3)
+	local charBase = band(cnt // 4, 3) * 0x4000
+	local colors8 = band(cnt, 0x80) ~= 0
+	local screenBase = band(cnt // 0x100, 0x1F) * 0x800
+	local size = band(cnt // 0x4000, 3)
 	local mapW = (size == 1 or size == 3) and 512 or 256
 	local mapH = (size == 2 or size == 3) and 512 or 256
 	local hofs, vofs = self.bghofs[bg], self.bgvofs[bg]
-	local msize = (bit32.band(cnt, 0x40) ~= 0) and (bit32.band(self.mosaic, 0xF) + 1) or 1
+	local msize = (band(cnt, 0x40) ~= 0) and (band(self.mosaic, 0xF) + 1) or 1
 
 	for x = 1, W do
-		if bit32.band(maskArr[x], layerBit) == 0 then continue end
+		if band(maskArr[x], layerBit) == 0 then continue end
 		local sx = (x - 1 + hofs)
 		local sy = (y + vofs)
 		if msize > 1 then
@@ -289,19 +292,19 @@ function Ppu:_renderTextBg(bg: number, y: number, maskArr: { number })
 		local mx = (sx % 256) // 8
 		local my = (sy % 256) // 8
 		local entry = self:_vram16(base + (my * 32 + mx) * 2)
-		local tile = bit32.band(entry, 0x3FF)
-		local pbank = bit32.band(entry // 0x1000, 0xF)
+		local tile = band(entry, 0x3FF)
+		local pbank = band(entry // 0x1000, 0xF)
 		local px = sx % 8
 		local py = sy % 8
-		if bit32.band(entry, 0x400) ~= 0 then px = 7 - px end
-		if bit32.band(entry, 0x800) ~= 0 then py = 7 - py end
+		if band(entry, 0x400) ~= 0 then px = 7 - px end
+		if band(entry, 0x800) ~= 0 then py = 7 - py end
 		local addr = charBase + tile * (colors8 and 64 or 32)
 		local idx
 		if colors8 then
 			idx = self:_vram8(addr + py * 8 + px)
 		else
 			local b = self:_vram8(addr + py * 4 + (px // 2))
-			idx = (px % 2 == 0) and bit32.band(b, 0xF) or b // 0x10
+			idx = (px % 2 == 0) and band(b, 0xF) or b // 0x10
 		end
 		if idx ~= 0 then
 			local palIdx = colors8 and idx or (pbank * 16 + idx)
@@ -316,18 +319,18 @@ local AFFINE_DIM = { 128, 256, 512, 1024 }
 
 function Ppu:_renderAffineBg(bg: number, y: number, maskArr: { number })
 	local cnt = self.bgcnt[bg]
-	local layerBit = bit32.lshift(1, bg - 1)
-	local prio = bit32.band(cnt, 3)
-	local charBase = bit32.band(cnt // 4, 3) * 0x4000
-	local screenBase = bit32.band(cnt // 0x100, 0x1F) * 0x800
-	local wrap = bit32.band(cnt, 0x2000) ~= 0
-	local size = bit32.band(cnt // 0x4000, 3)
+	local layerBit = lshift(1, bg - 1)
+	local prio = band(cnt, 3)
+	local charBase = band(cnt // 4, 3) * 0x4000
+	local screenBase = band(cnt // 0x100, 0x1F) * 0x800
+	local wrap = band(cnt, 0x2000) ~= 0
+	local size = band(cnt // 0x4000, 3)
 	local dim = AFFINE_DIM[size + 1]
 	local ai = bg - 1 -- BG2 -> 1, BG3 -> 2
 	local pa, pb = self.bgpa[ai], self.bgpb[ai]
 	local pc, pd = self.bgpc[ai], self.bgpd[ai]
 	local refX, refY = self.bgx[ai], self.bgy[ai]
-	local msize = (bit32.band(cnt, 0x40) ~= 0) and (bit32.band(self.mosaic, 0xF) + 1) or 1
+	local msize = (band(cnt, 0x40) ~= 0) and (band(self.mosaic, 0xF) + 1) or 1
 	local tilesPerRow = dim // 8
 
 	-- Reference is 1/256 px; y contribution added once for the whole line.
@@ -335,7 +338,7 @@ function Ppu:_renderAffineBg(bg: number, y: number, maskArr: { number })
 	local rowY = refY + pd * msize * (y // 1)
 
 	for x = 1, W do
-		if bit32.band(maskArr[x], layerBit) == 0 then continue end
+		if band(maskArr[x], layerBit) == 0 then continue end
 		local sampleX = x - 1
 		local px = rowX + pa * msize * sampleX
 		local py = rowY + pc * msize * sampleX
@@ -387,15 +390,15 @@ function Ppu:_objPixel(colors8: boolean, addr: number, px: number, py: number): 
 		return self:_vram8(addr + py * 8 + px)
 	end
 	local b = self:_vram8(addr + py * 4 + (px // 2))
-	if px % 2 == 0 then return bit32.band(b, 0xF) end
+	if px % 2 == 0 then return band(b, 0xF) end
 	return b // 0x10
 end
 
 function Ppu:_renderObj(y: number, maskArr: { number }, objWinArr: { boolean })
 	local dispcnt = self.dispcnt
-	local oneD = bit32.band(dispcnt, 0x40) ~= 0
+	local oneD = band(dispcnt, 0x40) ~= 0
 	local oam = self.bus.oam
-	local msize = (bit32.band(dispcnt, 0x40) ~= 0) and 1 or 1
+	local msize = (band(dispcnt, 0x40) ~= 0) and 1 or 1
 	msize = msize -- mosaic handled per-sprite below
 
 	for i = 0, 127 do
@@ -410,20 +413,20 @@ function Ppu:_renderObj(y: number, maskArr: { number }, objWinArr: { boolean })
 		local dims = OBJ_SIZES[shape][size + 1]
 		local w, h = dims[1], dims[2]
 
-		local sy = bit32.band(attr0, 0xFF)
+		local sy = band(attr0, 0xFF)
 		if sy > 159 then sy -= 256 end
-		local sx = bit32.band(attr1, 0x1FF)
+		local sx = band(attr1, 0x1FF)
 		if sx > 239 then sx -= 512 end
 
-		local rot = bit32.band(attr0, 0x100) ~= 0
-		local dbl = bit32.band(attr0, 0x200) ~= 0
+		local rot = band(attr0, 0x100) ~= 0
+		local dbl = band(attr0, 0x200) ~= 0
 		local mode = (attr0 // 0x400) % 4
 		if mode == 3 then continue end
-		local mosaic = bit32.band(attr0, 0x1000) ~= 0
-		local colors8 = bit32.band(attr0, 0x2000) ~= 0
+		local mosaic = band(attr0, 0x1000) ~= 0
+		local colors8 = band(attr0, 0x2000) ~= 0
 		local prio = (attr2 // 0x400) % 4
 		local palBank = (attr2 // 0x1000) * 16
-		local tileNum = bit32.band(attr2, 0x3FF)
+		local tileNum = band(attr2, 0x3FF)
 		local key = prio * 2048 - 1024 - i
 
 		local boxW = rot and (dbl and w * 2 or w) or w
@@ -463,7 +466,7 @@ function Ppu:_renderObj(y: number, maskArr: { number }, objWinArr: { boolean })
 							local x = px + 1
 							if mode == 2 then
 								objWinArr[x] = true
-							elseif bit32.band(maskArr[x], 0x10) ~= 0 then
+							elseif band(maskArr[x], 0x10) ~= 0 then
 								local color = self:_pal(colors8 and idx or (palBank + idx))
 								put(self, x, color, key, 5, mode == 1)
 							end
@@ -472,10 +475,10 @@ function Ppu:_renderObj(y: number, maskArr: { number }, objWinArr: { boolean })
 				end
 			end
 		else
-			local hflip = bit32.band(attr1, 0x1000) ~= 0
-			local vflip = bit32.band(attr1, 0x2000) ~= 0
+			local hflip = band(attr1, 0x1000) ~= 0
+			local vflip = band(attr1, 0x2000) ~= 0
 			local addr = self:_objTileAddr(tileNum, colors8, oneD)
-			local m = mosaic and (bit32.band(self.mosaic, 0xF) + 1) or 1
+			local m = mosaic and (band(self.mosaic, 0xF) + 1) or 1
 			local ly = y - sy
 			if vflip then ly = h - 1 - ly end
 			if m > 1 then ly = (ly // m) * m end
@@ -490,7 +493,7 @@ function Ppu:_renderObj(y: number, maskArr: { number }, objWinArr: { boolean })
 						local x = px + 1
 						if mode == 2 then
 							objWinArr[x] = true
-						elseif bit32.band(maskArr[x], 0x10) ~= 0 then
+						elseif band(maskArr[x], 0x10) ~= 0 then
 							local color = self:_pal(colors8 and idx or (palBank + idx))
 							put(self, x, color, key, 5, mode == 1)
 						end
@@ -506,18 +509,18 @@ end
 function Ppu:_renderBitmapBg(mode: number, y: number, maskArr: { number })
 	local dispcnt = self.dispcnt
 	local layerBit = 0x4 -- BG2
-	local page = bit32.band(dispcnt, 0x10) ~= 0 and 1 or 0
+	local page = band(dispcnt, 0x10) ~= 0 and 1 or 0
 	if mode == 3 then
 		local base = y * 240 * 2
 		for x = 1, W do
-			if bit32.band(maskArr[x], layerBit) == 0 then continue end
+			if band(maskArr[x], layerBit) == 0 then continue end
 			local color = self:_vram16(base + (x - 1) * 2)
 			if color ~= 0 then put(self, x, color, 0, 3, false) end
 		end
 	elseif mode == 4 then
 		local base = page * 0xA000 + y * 240
 		for x = 1, W do
-			if bit32.band(maskArr[x], layerBit) == 0 then continue end
+			if band(maskArr[x], layerBit) == 0 then continue end
 			local idx = self:_vram8(base + (x - 1))
 			if idx ~= 0 then put(self, x, self:_pal(idx), 0, 3, false) end
 		end
@@ -525,7 +528,7 @@ function Ppu:_renderBitmapBg(mode: number, y: number, maskArr: { number })
 		if y >= 128 then return end
 		local base = page * 0xA000 + y * 160 * 2
 		for x = 1, math.min(W, 160) do
-			if bit32.band(maskArr[x], layerBit) == 0 then continue end
+			if band(maskArr[x], layerBit) == 0 then continue end
 			local color = self:_vram16(base + (x - 1) * 2)
 			if color ~= 0 then put(self, x, color, 0, 3, false) end
 		end
@@ -536,7 +539,7 @@ end
 
 function Ppu:_computeWindows(y: number, objWinArr: { boolean }, maskArr: { number })
 	local dispcnt = self.dispcnt
-	local hasWin = bit32.band(dispcnt, 0xE000) ~= 0
+	local hasWin = band(dispcnt, 0xE000) ~= 0
 	if not hasWin then
 		for x = 1, W do maskArr[x] = 0x3F end
 		return
@@ -544,41 +547,41 @@ function Ppu:_computeWindows(y: number, objWinArr: { boolean }, maskArr: { numbe
 	local winin, winout = self.winin, self.winout
 	local w0h, w0v = self.winh[1], self.winv[1]
 	local w1h, w1v = self.winh[2], self.winv[2]
-	local w0ok = bit32.band(dispcnt, 0x2000) ~= 0
-	local w1ok = bit32.band(dispcnt, 0x4000) ~= 0
-	local objwinOk = bit32.band(dispcnt, 0x8000) ~= 0
+	local w0ok = band(dispcnt, 0x2000) ~= 0
+	local w1ok = band(dispcnt, 0x4000) ~= 0
+	local objwinOk = band(dispcnt, 0x8000) ~= 0
 	for x = 1, W do
 		local px = x - 1
 		local in0 = false
 		if w0ok then
-			local left = bit32.band(w0h // 0x100, 0xFF)
-			local right = bit32.band(w0h, 0xFF)
-			local top = bit32.band(w0v // 0x100, 0xFF)
-			local bottom = bit32.band(w0v, 0xFF)
+			local left = band(w0h // 0x100, 0xFF)
+			local right = band(w0h, 0xFF)
+			local top = band(w0v // 0x100, 0xFF)
+			local bottom = band(w0v, 0xFF)
 			local xIn = (left <= right) and (px >= left and px <= right) or (px >= left or px <= right)
 			local yIn = (top <= bottom) and (y >= top and y <= bottom) or (y >= top or y <= bottom)
 			in0 = xIn and yIn
 		end
 		local mask
 		if in0 then
-			mask = bit32.band(winin, 0x3F)
+			mask = band(winin, 0x3F)
 		else
 			local in1 = false
 			if w1ok then
-				local left = bit32.band(w1h // 0x100, 0xFF)
-				local right = bit32.band(w1h, 0xFF)
-				local top = bit32.band(w1v // 0x100, 0xFF)
-				local bottom = bit32.band(w1v, 0xFF)
+				local left = band(w1h // 0x100, 0xFF)
+				local right = band(w1h, 0xFF)
+				local top = band(w1v // 0x100, 0xFF)
+				local bottom = band(w1v, 0xFF)
 				local xIn = (left <= right) and (px >= left and px <= right) or (px >= left or px <= right)
 				local yIn = (top <= bottom) and (y >= top and y <= bottom) or (y >= top or y <= bottom)
 				in1 = xIn and yIn
 			end
 			if in1 then
-				mask = bit32.band(winin // 0x100, 0x3F)
+				mask = band(winin // 0x100, 0x3F)
 			elseif objwinOk and objWinArr[x] then
-				mask = bit32.band(winout, 0x3F)
+				mask = band(winout, 0x3F)
 			else
-				mask = bit32.band(winout // 0x100, 0x3F)
+				mask = band(winout // 0x100, 0x3F)
 			end
 		end
 		maskArr[x] = mask
@@ -603,7 +606,7 @@ local function darkenChannel(c: number, evy: number): number
 end
 
 local function effectLayerBit(layer: number): number
-	if layer >= 1 and layer <= 4 then return bit32.lshift(1, layer - 1) end
+	if layer >= 1 and layer <= 4 then return lshift(1, layer - 1) end
 	if layer == 5 then return 0x10 end
 	return 0x20
 end
@@ -612,44 +615,44 @@ function Ppu:_applyEffects(maskArr: { number })
 	local bldcnt = self.bldcnt
 	local effect = (bldcnt // 0x40) % 4
 	if effect == 0 then return end
-	local target1 = bit32.band(bldcnt, 0x3F)
-	local target2 = bit32.band(bldcnt // 0x100, 0x3F)
-	local eva = bit32.band(self.bldalpha, 0x1F)
-	local evy = bit32.band(self.bldy, 0x1F)
+	local target1 = band(bldcnt, 0x3F)
+	local target2 = band(bldcnt // 0x100, 0x3F)
+	local eva = band(self.bldalpha, 0x1F)
+	local evy = band(self.bldy, 0x1F)
 
 	for x = 1, W do
-		if bit32.band(maskArr[x], 0x20) == 0 then continue end
+		if band(maskArr[x], 0x20) == 0 then continue end
 		local top = self.scanline[x]
 		local topLayer = self.scanLayer[x]
 		local semi = self.scanSemi[x]
 		local doAlpha = false
 		if semi and topLayer == 5 then
 			doAlpha = true
-		elseif effect == 1 and bit32.band(target1, effectLayerBit(topLayer)) ~= 0
-			and bit32.band(target2, effectLayerBit(self.scanUnderLayer[x])) ~= 0 then
+		elseif effect == 1 and band(target1, effectLayerBit(topLayer)) ~= 0
+			and band(target2, effectLayerBit(self.scanUnderLayer[x])) ~= 0 then
 			doAlpha = true
 		end
 		if doAlpha then
 			local under = self.scanUnder[x]
-			local r1 = bit32.band(top, 0x1F)
-			local g1 = bit32.band(top // 0x20, 0x1F)
-			local b1 = bit32.band(top // 0x400, 0x1F)
-			local r2 = bit32.band(under, 0x1F)
-			local g2 = bit32.band(under // 0x20, 0x1F)
-			local b2 = bit32.band(under // 0x400, 0x1F)
+			local r1 = band(top, 0x1F)
+			local g1 = band(top // 0x20, 0x1F)
+			local b1 = band(top // 0x400, 0x1F)
+			local r2 = band(under, 0x1F)
+			local g2 = band(under // 0x20, 0x1F)
+			local b2 = band(under // 0x400, 0x1F)
 			local r = blendChannel(r1, r2, eva)
 			local g = blendChannel(g1, g2, eva)
 			local b = blendChannel(b1, b2, eva)
 			self.scanline[x] = r + g * 0x20 + b * 0x400
-		elseif effect == 2 and bit32.band(target1, effectLayerBit(topLayer)) ~= 0 then
-			local r = brightenChannel(bit32.band(top, 0x1F), evy)
-			local g = brightenChannel(bit32.band(top // 0x20, 0x1F), evy)
-			local b = brightenChannel(bit32.band(top // 0x400, 0x1F), evy)
+		elseif effect == 2 and band(target1, effectLayerBit(topLayer)) ~= 0 then
+			local r = brightenChannel(band(top, 0x1F), evy)
+			local g = brightenChannel(band(top // 0x20, 0x1F), evy)
+			local b = brightenChannel(band(top // 0x400, 0x1F), evy)
 			self.scanline[x] = r + g * 0x20 + b * 0x400
-		elseif effect == 3 and bit32.band(target1, effectLayerBit(topLayer)) ~= 0 then
-			local r = darkenChannel(bit32.band(top, 0x1F), evy)
-			local g = darkenChannel(bit32.band(top // 0x20, 0x1F), evy)
-			local b = darkenChannel(bit32.band(top // 0x400, 0x1F), evy)
+		elseif effect == 3 and band(target1, effectLayerBit(topLayer)) ~= 0 then
+			local r = darkenChannel(band(top, 0x1F), evy)
+			local g = darkenChannel(band(top // 0x20, 0x1F), evy)
+			local b = darkenChannel(band(top // 0x400, 0x1F), evy)
 			self.scanline[x] = r + g * 0x20 + b * 0x400
 		end
 	end
@@ -670,7 +673,7 @@ function Ppu:_renderScanline(y: number)
 	end
 
 	local dispcnt = self.dispcnt
-	if bit32.band(dispcnt, 0x80) ~= 0 then
+	if band(dispcnt, 0x80) ~= 0 then
 		for x = 1, W do self.scanline[x] = 0x7FFF end
 		return
 	end
@@ -687,13 +690,13 @@ function Ppu:_renderScanline(y: number)
 	local bgEn = (dispcnt // 0x100) % 16
 
 	self:_computeWindows(y, objWinArr, approx)
-	if bit32.band(dispcnt, 0x1000) ~= 0 then
+	if band(dispcnt, 0x1000) ~= 0 then
 		self:_renderObj(y, approx, objWinArr)
 	end
 	self:_computeWindows(y, objWinArr, maskArr)
 
 	local function enabled(bg: number): boolean
-		return bit32.band(bgEn, bit32.lshift(1, bg)) ~= 0
+		return band(bgEn, lshift(1, bg)) ~= 0
 	end
 
 	if mode == 0 then

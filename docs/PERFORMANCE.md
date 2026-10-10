@@ -109,3 +109,34 @@ The remaining work is interpreter engineering, not rendering:
 Until those land, treat 30+ FPS as a target for light titles, and use the
 adaptive layer plus `Config.CORE.maxCyclesPerFrame` to keep heavier ones
 playable rather than frozen.
+
+### Round 2: interpreter hot-path work (measured)
+
+Attribution before the changes (per emulated instruction):
+
+| stage | cost | share |
+|---|---|---|
+| `cpu:step` (decode + execute + fetch) | 0.405 us | 51% |
+| `bus:tick` (PPU + timers + APU) | 0.295 us | 38% |
+| of which `timers:tick` | 0.104 us | |
+| of which `ppu:tick` | 0.097 us | |
+
+Applied:
+
+1. **Tick batching** - cycles are accumulated and flushed every 4 instructions
+   instead of ticking three components per instruction.
+2. **bit32 localised** at the top of the CPU, bus and PPU modules.
+3. **Register access de-methodised** - `self:reg()` / `self:setReg()` became plain
+   `getReg(cpu, i)` / `putReg(cpu, i, v)` functions, removing a metatable lookup
+   from every call.
+
+Result:
+
+| metric | before | after |
+|---|---|---|
+| us per instruction | 0.786 | 0.660 |
+| instructions/sec | 1.24 M | **1.51 M** |
+| frame (90k-instruction workload) | 73.3 ms | **59.5 ms** |
+
+New profile: `cpu:step` is now **62%** of an instruction; the batched tick is
+~11%. The bottleneck has moved into the decoder itself.

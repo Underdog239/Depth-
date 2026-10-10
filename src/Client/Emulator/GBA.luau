@@ -51,6 +51,7 @@ function GBA.new(options: any)
 	self.cpu = Arm7tdmi.new(self.bus)
 	self.cart = nil
 	self.frames = 0
+	self.pendingCycles = 0
 	self.diag = options.diag
 
 	if options.bios then
@@ -86,6 +87,7 @@ function GBA:reset()
 	-- offset 0 are the entry-point branch instruction itself.
 	self.cpu:reset(0x08000000)
 	self.frames = 0
+	self.pendingCycles = 0
 end
 
 function GBA:setKeys(mask: number)
@@ -104,6 +106,12 @@ function GBA:loadSaveBytes(bytes: { number })
 	if self.cart then self.cart:loadSaveBytes(bytes) end
 end
 
+-- Ticking the PPU, timers and APU costs about 38% of an emulated instruction when
+-- done one instruction at a time (measured). Cycles are accumulated and flushed
+-- in small batches instead: the timing error is bounded by TICK_BATCH cycles,
+-- which is a few hundred nanoseconds of emulated time - far below a scanline.
+local TICK_BATCH = 4
+
 --- Run a single CPU instruction with proper cycle accounting.
 function GBA:stepInstruction()
 	if self.cpu.halted then
@@ -115,9 +123,28 @@ function GBA:stepInstruction()
 			return
 		end
 	end
-	local cycles = self.cpu:step()
-	self.bus:tick(cycles + self.bus.stallCycles)
+	local cycles = self.cpu:step() + self.bus.stallCycles
 	self.bus.stallCycles = 0
+	local pending = self.pendingCycles + cycles
+	if pending >= TICK_BATCH then
+		self.bus:tick(pending)
+		self.pendingCycles = 0
+	else
+		self.pendingCycles = pending
+	end
+end
+
+--- Flush cycles still held back by batching.
+function GBA:flushCycles()
+	if self.pendingCycles > 0 then
+		self.bus:tick(self.pendingCycles)
+		self.pendingCycles = 0
+	end
+end
+
+--- Total emulated cycles including any not yet flushed to the components.
+function GBA:cycles(): number
+	return self.bus.cycles + self.pendingCycles
 end
 
 --- Run until the PPU completes one frame (or the safety budget is exhausted).
@@ -130,11 +157,12 @@ function GBA:runFrame(): number
 	-- cycles. Used for benchmarking and for titles that need a speed nudge.
 	if Config.CORE.skipFrameCap then
 		local target = Config.CORE.fixedCyclesPerFrame
-		local start = self.bus.cycles
-		while self.bus.cycles - start < target and guard < maxIterations do
+		local start = self:cycles()
+		while self:cycles() - start < target and guard < maxIterations do
 			self:stepInstruction()
 			guard += 1
 		end
+		self:flushCycles()
 		self.frames += 1
 		return self.ppu.frame
 	end
@@ -152,16 +180,18 @@ function GBA:runFrame(): number
 			break
 		end
 	end
+	self:flushCycles()
 	self.frames += 1
 	return self.ppu.frame
 end
 
 --- Run for a fixed number of master cycles (used by benchmarks/tests).
 function GBA:runCycles(cycles: number)
-	local start = self.bus.cycles
-	while self.bus.cycles - start < cycles do
+	local start = self:cycles()
+	while self:cycles() - start < cycles do
 		self:stepInstruction()
 	end
+	self:flushCycles()
 end
 
 function GBA:info()
