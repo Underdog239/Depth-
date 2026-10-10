@@ -1,6 +1,8 @@
 # Depth / LuauGBA — testing build
 
 A client-side Game Boy Advance emulator written in Luau for Roblox.
+All runtime work stays on the client; no server scripts, remotes or DataStores
+are used. Diagnostics reset when you leave the session.
 Version **0.2.0-testing** provides a built-in interactive homebrew demo, ROM
 loading, keyboard/gamepad controls, graphics, session snapshots, battery-save
 export/import, and a diagnostics dashboard.
@@ -30,13 +32,20 @@ assert(loadstring(game:GetService("HttpService"):GetAsync("https://raw.githubuse
 ```
 
 Press **Play**, then **Run demo**, and save your place to keep the installation.
-This command requires Studio's Command Bar in Edit mode. It creates the client,
-server and shared modules; it is not an in-game LocalScript loader. You can also
+This command requires Studio's Command Bar in Edit mode. It creates the client
+and its modules; it is not an in-game LocalScript loader. You can also
 paste the full contents of `installer/Depth-install.luau` into the Command Bar
 without enabling HTTP. The installer refuses to overwrite existing
 `ReplicatedStorage.Assets`, `ReplicatedStorage.Shared`,
-`ServerScriptService.GBAServer`, or `StarterPlayerScripts.GBAClient` objects.
+or `StarterPlayerScripts.GBAClient` objects.
 Use a new Baseplate or move conflicting objects before installing.
+
+If upgrading from the earlier installer, stop Play and remove its
+`ServerScriptService.GBAServer` folder (and `ReplicatedStorage.GBADiagRemotes`
+if present). Replace its `ReplicatedStorage.Shared`, `ReplicatedStorage.Assets`
+and `StarterPlayerScripts.GBAClient` objects before installing again. Back up
+custom configuration and `Assets.ROM` first. The installer does not remove old
+objects automatically.
 
 Rebuild the installer after changing source:
 
@@ -70,8 +79,8 @@ included in the repository or testing place.
   exported text to a local file and paste it back in a later session with the
   same game loaded. Import restarts the game. Game saves are not automatically
   uploaded to DataStore.
-- **Diagnostics** shows runtime findings. Optional server persistence is scoped
-  to each player and requires Roblox DataStore access.
+- **Diagnostics** shows findings held in memory on this client. Findings are
+  cleared when the session ends.
 
 ## Automated checks
 

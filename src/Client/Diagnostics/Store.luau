@@ -3,7 +3,7 @@
 
  Ring buffer of Findings with dedup-by-symbol and occurrence counting.
  Pure data structure (no Roblox APIs) so it is trivially unit-testable and
- reusable on both client and server.
+ used by the local diagnostics dashboard.
  ]]
 
 local Classifier = require(script.Parent.Classifier)
@@ -20,6 +20,8 @@ export type Store = {
 	toArray: (self: Store) -> { any },
 	fromArray: (self: Store, arr: { any }) -> (),
 }
+
+local severityRank = { info = 1, warn = 2, error = 3, fatal = 4 }
 
 local Store = {}
 Store.__index = Store
@@ -38,7 +40,7 @@ function Store:add(finding: Finding): Finding
 	if existing then
 		existing.count += 1
 		existing.lastSeen = finding.lastSeen
-		if finding.severity == "fatal" or finding.severity == "error" then
+		if severityRank[finding.severity] > severityRank[existing.severity] then
 			existing.severity = finding.severity
 		end
 		if finding.stack then existing.stack = finding.stack end
@@ -84,7 +86,7 @@ function Store:clear()
 	table.clear(self._order)
 end
 
---- Serialize to a plain array (DataStore-safe: no mixed tables / functions).
+--- Copy findings to a plain array.
 function Store:toArray(): { any }
 	local out = {}
 	for _, sym in self._order do

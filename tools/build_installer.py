@@ -22,12 +22,11 @@ def bundle(place):
         properties = item.find('Properties')
         name = properties.find("*[@name='Name']").text
         class_name = item.attrib['class']
-        if class_name not in {'Folder', 'ModuleScript', 'Script', 'LocalScript'}:
+        if class_name not in {'Folder', 'ModuleScript', 'LocalScript'}:
             raise ValueError('Unsupported instance: ' + class_name)
         for prop in properties:
             if prop.attrib['name'] not in {'Name', 'Source'}:
-                if not (prop.attrib['name'] == 'RunContext' and prop.text == '0'):
-                    raise ValueError('Unsupported property: ' + prop.attrib['name'])
+                raise ValueError('Unsupported property: ' + prop.attrib['name'])
         source = properties.find("*[@name='Source']")
         index = len(nodes) + 1
         nodes.append('{class = %s, name = %s, parent = %d%s}' % (
@@ -44,7 +43,7 @@ def bundle(place):
             if container is None or len(service.findall('Item')) != 1:
                 raise ValueError('Unexpected StarterPlayer layout')
             destination = 'starterScripts'
-        elif service_name in {'ReplicatedStorage', 'ServerScriptService'}:
+        elif service_name == 'ReplicatedStorage':
             container = service
             destination = 'game:GetService(' + literal(service_name) + ')'
         else:

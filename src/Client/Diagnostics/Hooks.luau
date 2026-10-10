@@ -4,7 +4,7 @@
  Installs the runtime surfaces that feed the catcher *without the user running
  anything*:
 
-   * ScriptContext.Error        -- server-side uncaught Lua errors
+   * ScriptContext.Error        -- uncaught Lua errors visible to this client
    * LogService.MessageOut      -- warn()/print()/error() from any script
    * RunService.Heartbeat/Stepped -- for stall detection
    * a global pcatch wrapper    -- for our own guarded entry points
@@ -37,7 +37,7 @@ function Hooks.install(sink: HookSink)
 	if Hooks._installed then return end
 	Hooks._installed = true
 
-	-- 1) Uncaught server errors
+	-- 1) Uncaught client errors
 	local sc = safeService("ScriptContext")
 	if sc then
 		local ok, conn = pcall(function()

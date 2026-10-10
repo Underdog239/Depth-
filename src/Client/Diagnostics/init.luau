@@ -10,12 +10,11 @@
    Diag.summary()                     -- { error = n, bug = n, ... }
    Diag.findings({ category = "unfinished" })
    Diag.advice(finding)               -- suggested fix text
-   Diag.saveToBackend() / Diag.loadFromBackend()
 
  Background behaviour: install() starts a task loop that (a) static-scans the
- emulator's own scripts, (b) runs every registered invariant, (c) flushes new
- findings to the persistence backend. It also records the last scan time so the
- dashboard can prove it ran without the user triggering anything.
+ emulator's own scripts and (b) runs every registered invariant. Findings stay
+ in memory on this client for the current session. It also records the last
+ scan time so the dashboard can show when it ran.
  ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -28,7 +27,6 @@ local Store = require(script.Store)
 local StaticScan = require(script.StaticScan)
 local Watchdog = require(script.Watchdog)
 local Hooks = require(script.Hooks)
-local Persistence = require(script.Persistence)
 
 export type Finding = Classifier.Finding
 
@@ -43,9 +41,7 @@ Diag._invariants = {} :: { Invariant }
 Diag._installed = false
 Diag._lastScan = 0
 Diag._scanRuns = 0
-Diag._backend = nil :: any
 Diag._backgroundTask = nil :: thread?
-Diag._dirty = false
 
 -- Core capture --------------------------------------------------------------
 
@@ -63,7 +59,6 @@ function Diag.capture(signal: {
 	end
 	local finding = Classifier.makeFinding(signal)
 	local stored = Diag._store:add(finding)
-	Diag._dirty = true
 	Diag.onFinding:fire(stored)
 	-- The originating error is already logged. Logging findings back into the
 	-- observed Logger/LogService creates recursive findings.
@@ -102,35 +97,6 @@ function Diag.findings(filter: { category: string?, minSeverity: string? }?)
 		out[#out + 1] = f
 	end
 	return out
-end
-
---- Merge findings that were persisted by the server in an earlier session.
--- Counts are reconciled by taking the higher value so a rejoin does not inflate
--- occurrence totals.
-function Diag.mergeFindings(list: { any })
-	if type(list) ~= "table" then return end
-	for _, raw in list do
-		if type(raw) == "table" and type(raw.message) == "string" and type(raw.symbol) == "string" then
-			local existing = Diag._store:get(raw.symbol)
-			if existing then
-				existing.count = math.max(existing.count, raw.count or 1)
-				existing.lastSeen = math.max(existing.lastSeen, raw.lastSeen or 0)
-			else
-				Diag._store:add({
-					id = raw.symbol,
-					category = raw.category or "bug",
-					severity = raw.severity or "info",
-					message = raw.message,
-					source = raw.source or "server",
-					symbol = raw.symbol,
-					stack = raw.stack,
-					count = raw.count or 1,
-					firstSeen = raw.firstSeen or 0,
-					lastSeen = raw.lastSeen or 0,
-				})
-			end
-		end
-	end
 end
 
 function Diag.summary()
@@ -184,14 +150,6 @@ local function runScan()
 	end
 end
 
-local function flush()
-	if not Diag._dirty or not Config.DIAG.persist or not Diag._backend then return end
-	local ok = pcall(function()
-		Diag._backend:save(Diag._store:toArray())
-	end)
-	if ok then Diag._dirty = false end
-end
-
 --- Start the background monitor. Returns immediately.
 function Diag.install()
 	if Diag._installed then return end
@@ -205,22 +163,14 @@ function Diag.install()
 
 	Hooks.install(function(sig) Diag.capture(sig) end)
 
-	Diag._backend = Persistence.auto(Config.DIAG.dataStoreName, "session")
-	local loaded = Diag._backend:load()
-	if loaded and #loaded > 0 then
-		Diag._store:fromArray(loaded)
-		Logger.info(`DIAG restored {#loaded} persisted findings from a previous session`)
-	end
-
 	Diag._backgroundTask = task.spawn(function()
 		local interval = Config.DIAG.scanInterval
 		while Diag._installed do
 			task.wait(interval)
 			pcall(runScan)
-			pcall(flush)
 		end
 	end)
-	Logger.info("DIAG background catcher online (static scan + invariants + persistence)")
+	Logger.info("DIAG background catcher online (static scan + invariants)")
 end
 
 function Diag.setWatchdogReporter(wd: any)
@@ -229,11 +179,6 @@ function Diag.setWatchdogReporter(wd: any)
 	end
 end
 
-function Diag.saveToBackend() flush() end
-function Diag.loadFromBackend(): { any }
-	if Diag._backend then return Diag._backend:load() end
-	return {}
-end
 function Diag.shutdown()
 	Diag._installed = false
 	Diag.onFinding:clear()

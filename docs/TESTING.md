@@ -34,9 +34,10 @@ These checks require Roblox Studio and remain manual acceptance gates.
    ROM or leaving. Import validates size, so always use the same game's save.
 8. **Diagnostics:** open the dashboard, check reported issues, and verify that
    one error does not generate an endless stream of recursive findings.
-9. **Persistence (optional):** in a published test place with Studio API access
-   enabled, check findings survive a rejoin. Test with two players and verify
-   their findings are isolated. Game save data uses manual export/import.
+9. **Client isolation:** verify there is no `GBAServer` script or
+   `GBADiagRemotes` folder. With two clients, each demo, input, snapshot and
+   diagnostics list must operate independently. Rejoining clears diagnostics.
+   No Studio API access is needed; game saves use manual export/import.
 10. **Responsiveness:** try a heavier homebrew ROM. UI controls should respond
     between emulation slices. Record renderer, game code and metrics when
     reporting a stall or graphical problem.
@@ -57,7 +58,15 @@ python3 tools/fetch_gba_tests.py
 luau build/Tests/gba_suite.luau
 rojo build default.project.json -o Depth-testing.rbxlx
 python3 tools/check_project.py Depth-testing.rbxlx
+python3 tools/build_installer.py Depth-testing.rbxlx installer/Depth-install.luau
+python3 tools/check_installer.py Depth-testing.rbxlx installer/Depth-install.luau
 ```
+
+`check_project.py` checks static module references and rejects server scripts,
+remotes and server API calls. `check_installer.py` compares all installed
+instances and source text to the built place using simulated Studio services;
+it also exercises collision guards and failure cleanup. Actual Studio behavior
+still requires the checklist above.
 
 `prepare_tests.py` regenerates `build/`; run the fixture fetch **after** it.
 The conformance fixtures are pinned to
@@ -73,7 +82,7 @@ The real-BIOS suite and NES/unsafe demos are not conformance gates.
 Regression checks cover DMA address/width/repeat behavior, EEPROM serial DMA,
 timer cascade/reload, sound FIFO routing/refill, IO lanes, PPU register routing,
 BIOS decompression and IRQ return, frame slicing, deterministic snapshots,
-reset, demo input, invalid data and the diagnostics payload boundary.
+reset, demo input, invalid data and local diagnostics severity/deduplication.
 
 ## Reporting a failure
 

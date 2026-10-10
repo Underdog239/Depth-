@@ -16,9 +16,12 @@
    (ARM+THUMB)     (regions, IO)    timers/keypad
 ```
 
+All runtime execution is client side. `ReplicatedStorage` holds static modules
+and optional ROM assets; there is no server component or network sync.
+
 ## Layering rules
 
-1. **`Shared/`** never depends on `Client/` or `Server/`. It holds config, the
+1. **`Shared/`** never depends on `Client/`. It holds config, the
    logger, signals, base64 and shared types.
 2. **`Emulator/`** is Roblox-independent apart from `ReplicatedStorage.Shared.Config`.
    Every module under it can run under the standalone Luau binary (that is how the

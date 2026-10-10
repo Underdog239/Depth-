@@ -6,8 +6,7 @@
    1. background diagnostics catcher
    2. emulator + audio bridge + renderer + input + UI
    3. embedded-ROM auto-load (web/rom-tool.html produces the module)
-   4. cross-session persistence via DiagBridge
-   5. frame loop with profiling, adaptive pacing and a VU meter
+   4. frame loop with profiling, adaptive pacing and a VU meter
  ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,7 +14,6 @@ local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Logger)
-local DiagBridge = require(ReplicatedStorage.Shared.DiagBridge)
 
 local Diagnostics = require(script.Diagnostics)
 local GBA = require(script.Emulator.GBA)
@@ -46,7 +44,6 @@ local running = false
 local paused = false
 local frameIndex = 0
 local savedState = nil
-local lastSync = os.clock()
 local emulationDebt = 0
 
 local ui, renderer, input, dashboard
@@ -147,16 +144,7 @@ task.spawn(function()
 	end
 end)
 
--- 4. Cross-session persistence -----------------------------------------------
-task.spawn(function()
-	local persisted = DiagBridge.fetch()
-	if #persisted > 0 then
-		Diagnostics.mergeFindings(persisted)
-		Logger.info(`restored {#persisted} findings from the server store`)
-	end
-end)
-
--- 5. Invariants the catcher checks in the background --------------------------
+-- 4. Invariants the catcher checks in the background --------------------------
 Diagnostics.registerInvariant("cpu.pc.inrange", function()
 	local pc = gba.cpu.regs[16]
 	return pc >= 0 and pc < 0x10000000, `PC out of range: 0x{string.format("%08X", pc)}`
@@ -176,7 +164,7 @@ Diagnostics.registerInvariant("save.size.valid", function()
 	return backend.size > 0 and #backend.data == backend.size, "save backend size mismatch"
 end)
 
--- 6. Frame loop ---------------------------------------------------------------
+-- 5. Frame loop ---------------------------------------------------------------
 local function onFrame(dt: number)
 	local frameStart = os.clock()
 	frameIndex += 1
@@ -219,15 +207,6 @@ local function onFrame(dt: number)
 	if renderer.currentScale ~= adaptive.currentScale then
 		renderer:setScale(adaptive.currentScale)
 		ui:setScale(adaptive.currentScale)
-	end
-
-	-- periodic server sync of locally caught findings
-	local now = os.clock()
-	if now - lastSync > Config.DIAG.syncInterval then
-		lastSync = now
-		task.spawn(function()
-			DiagBridge.push(Diagnostics._store:toArray())
-		end)
 	end
 
 	if frameIndex % 30 == 0 and running and not paused then

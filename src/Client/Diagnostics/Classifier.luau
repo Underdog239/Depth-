@@ -80,7 +80,7 @@ end
 
 --- Derive severity from category + explicit hints.
 local function severityFor(category: Category, hint: string?): Severity
-	if hint == "fatal" or hint == "error" then return hint :: Severity end
+	if hint == "fatal" or hint == "error" or hint == "warn" or hint == "info" then return hint :: Severity end
 	if category == "error" then return "error" end
 	if category == "vulnerability" then return "warn" end
 	if category == "bug" then return "warn" end

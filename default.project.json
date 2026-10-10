@@ -16,11 +16,6 @@
           "$path": "src/Client"
         }
       }
-    },
-    "ServerScriptService": {
-      "GBAServer": {
-        "$path": "src/Server"
-      }
     }
   }
 }

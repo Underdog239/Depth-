@@ -56,14 +56,10 @@ Config.AUDIO = {
 Config.DIAG = {
 	enabled = true,
 	scanInterval = 2.0,
-	persist = true,
-	dataStoreName = "GBADIAG_v1",
 	maxEvents = 500,
 	minSeverity = "info",
 	categories = { "error", "bug", "vulnerability", "unfinished" },
 	stallMs = 250,
-	-- Push locally caught findings to the server for cross-session persistence.
-	syncInterval = 30,
 }
 
 -- Input ---------------------------------------------------------------------

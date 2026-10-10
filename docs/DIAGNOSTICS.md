@@ -14,8 +14,7 @@ Answer these questions **without the user running anything**:
 
 ```
 signal  ->  Classifier  ->  Store  ->  Dashboard
-  ^            |              |
-  |            |              +--> Persistence (DataStore)
+  ^            |
   |            +--> advice()
 sources:
   ScriptContext.Error, LogService.MessageOut, Logger sink,
@@ -39,17 +38,13 @@ The dedup symbol is `category|source|normalised-message`, where numbers and hex
 literals are replaced by `N`. So `read8(0x1FF)` and `read8(0x200)` collapse into
 one finding with `count = 2` instead of flooding the list.
 
-## Persistence and "without running the script"
+## Session storage
 
-* The client keeps a session store and mirrors findings through the logger sink.
-* The server (`src/Server/DiagServer.server.luau`) owns a DataStore and exposes
-  two remotes: `GetFindings` and `PushFindings`.
-* The dashboard reads the server copy, so findings from **previous sessions**
-  are visible immediately on join - nothing has to be re-triggered.
-
-The server half deliberately demonstrates the secure pattern the catcher itself
-looks for: strict type/length validation, a per-player rate limit, no
-`loadstring`, no trusting client payloads.
+Findings stay in the client's bounded in-memory store. No server scripts,
+remotes or DataStore access are needed. Closing the session clears findings;
+copy useful diagnostic details before leaving. The dashboard monitors the
+current session only. In a published client, protected script source cannot
+be read, so static scans cannot replace build-time checks.
 
 ## Extending it
 

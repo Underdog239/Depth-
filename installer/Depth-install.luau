@@ -178,14 +178,10 @@ Config.AUDIO = {
 Config.DIAG = {
 	enabled = true,
 	scanInterval = 2.0,
-	persist = true,
-	dataStoreName = "GBADIAG_v1",
 	maxEvents = 500,
 	minSeverity = "info",
 	categories = { "error", "bug", "vulnerability", "unfinished" },
 	stallMs = 250,
-	-- Push locally caught findings to the server for cross-session persistence.
-	syncInterval = 30,
 }
 
 -- Input ---------------------------------------------------------------------
@@ -219,91 +215,6 @@ Config.INPUT = {
 }
 
 return Config
-]=]},
-{class = [=[
-ModuleScript]=], name = [=[
-DiagBridge]=], parent = 2, source = [=[
---!strict
---[[ Shared/DiagBridge.luau
-
- Client-side bridge to the server diagnostics store. Lets the dashboard show
- findings that were caught in *previous* sessions, so the answer to "did it
- catch anything?" is available without re-running anything.
-
- Degrades gracefully: if the remotes are missing (solo play / no server half)
- every call returns an empty result instead of erroring.
- ]]
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local DiagBridge = {}
-
-local function remote(name: string): any
-	local folder = ReplicatedStorage:FindFirstChild("GBADiagRemotes")
-	if not folder then return nil end
-	return folder:FindFirstChild(name)
-end
-
---- Pull persisted findings from the server (may be empty).
-function DiagBridge.fetch(): { any }
-	local rf = remote("GetFindings")
-	if not rf then return {} end
-	local ok, data = pcall(function() return rf:InvokeServer() end)
-	if ok and type(data) == "table" then return data end
-	return {}
-end
-
---- Push local findings to the server for persistence.
-function DiagBridge.push(list: { any }): boolean
-	local rf = remote("PushFindings")
-	if not rf then return false end
-	local ok, result = pcall(function() return rf:InvokeServer(list) end)
-	return ok and result == true
-end
-
-return DiagBridge
-]=]},
-{class = [=[
-ModuleScript]=], name = [=[
-DiagPayload]=], parent = 2, source = [=[
---!strict
--- Only bounded primitive fields cross the diagnostics persistence boundary.
-local Payload = {}
-local CATEGORIES = {error = true, bug = true, vulnerability = true, unfinished = true}
-local SEVERITIES = {info = true, warn = true, error = true, fatal = true}
-local function text(value: any, max: number): string
-	return type(value) == "string" and value:sub(1, max) or ""
-end
-local function number(value: any, fallback: number): number
-	if type(value) ~= "number" or value ~= value or math.abs(value) == math.huge then return fallback end
-	return math.clamp(value, 0, 1e12)
-end
-function Payload.sanitize(raw: any): any
-	if type(raw) ~= "table" or type(raw.category) ~= "string" or not CATEGORIES[raw.category] then return nil end
-	if type(raw.message) ~= "string" or type(raw.symbol) ~= "string" then return nil end
-	return {message = text(raw.message, 512), symbol = text(raw.symbol, 512),
-		category = raw.category, severity = type(raw.severity) == "string" and SEVERITIES[raw.severity] and raw.severity or "info",
-		source = text(raw.source, 128), stack = text(raw.stack, 2048),
-		count = math.max(1, number(raw.count, 1)), firstSeen = number(raw.firstSeen, 0), lastSeen = number(raw.lastSeen, 0)}
-end
-function Payload.merge(existing: {any}, incoming: {any}, limit: number): {any}
-	local map, order = {}, {}
-	for _, list in {existing, incoming} do
-		for i = 1, math.min(#list, limit) do
-			local f = Payload.sanitize(list[i])
-			if f then
-				local old = map[f.symbol]
-				if old then f.count = math.max(old.count, f.count)
-				else table.insert(order, f.symbol) end
-				map[f.symbol] = f
-			end
-		end
-	end
-	local out = {}
-	for i = math.max(1, #order - limit + 1), #order do table.insert(out, map[order[i]]) end
-	return out
-end
-return Payload
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
@@ -633,97 +544,6 @@ end
 return Util
 ]=]},
 {class = [=[
-Folder]=], name = [=[
-GBAServer]=], parent = 0},
-{class = [=[
-Script]=], name = [=[
-DiagServer]=], parent = 11, source = [=[
---!strict
--- Findings are isolated by player. Requests update a bounded cache; persistence
--- is coalesced so every client push does not consume a DataStore write.
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local Config = require(ReplicatedStorage.Shared.Config)
-local Payload = require(ReplicatedStorage.Shared.DiagPayload)
-local store
-if Config.DIAG.persist then
-	pcall(function() store = game:GetService("DataStoreService"):GetDataStore(Config.DIAG.dataStoreName) end)
-end
-local sessions = {}
-local function session(player)
-	local id = player.UserId
-	if sessions[id] then return sessions[id] end
-	local data = {}
-	if store then
-		local ok, value = pcall(function() return store:GetAsync("player:" .. id) end)
-		if ok and type(value) == "table" then data = Payload.merge({}, value, Config.DIAG.maxEvents) end
-	end
-	-- Another request may have completed while GetAsync yielded.
-	if not sessions[id] then sessions[id] = {findings = data, dirty = false, revision = 0} end
-	return sessions[id]
-end
-local function save(id, state)
-	if not store or not state.dirty or state.saving then return end
-	state.saving = true
-	local revision, snapshot = state.revision, state.findings
-	local ok = pcall(function()
-		store:UpdateAsync("player:" .. id, function(old)
-			return Payload.merge(type(old) == "table" and old or {}, snapshot, Config.DIAG.maxEvents)
-		end)
-	end)
-	state.saving = false
-	if ok and state.revision == revision then state.dirty = false end
-end
-local remotes = Instance.new("Folder")
-remotes.Name = "GBADiagRemotes"
-remotes.Parent = ReplicatedStorage
-local push = Instance.new("RemoteFunction")
-push.Name = "PushFindings"
-push.Parent = remotes
-local get = Instance.new("RemoteFunction")
-get.Name = "GetFindings"
-get.Parent = remotes
-local lastPush, lastGet = {}, {}
-push.OnServerInvoke = function(player, payload)
-	local now = os.clock()
-	if lastPush[player] and now - lastPush[player] < 5 then return false end
-	lastPush[player] = now
-	if type(payload) ~= "table" or #payload > Config.DIAG.maxEvents then return false end
-	local state = session(player)
-	state.findings = Payload.merge(state.findings, payload, Config.DIAG.maxEvents)
-	state.dirty = true
-	state.revision += 1
-	return true
-end
-get.OnServerInvoke = function(player)
-	local now = os.clock()
-	if lastGet[player] and now - lastGet[player] < 5 then return {} end
-	lastGet[player] = now
-	return session(player).findings
-end
-task.spawn(function()
-	while true do
-		task.wait(30)
-		for id, state in sessions do task.spawn(save, id, state) end
-	end
-end)
-Players.PlayerRemoving:Connect(function(player)
-	local state = sessions[player.UserId]
-	if state then save(player.UserId, state) end
-	sessions[player.UserId] = nil
-	lastPush[player], lastGet[player] = nil, nil
-end)
-game:BindToClose(function()
-	local remaining = 0
-	for id, state in sessions do
-		remaining += 1
-		task.spawn(function() save(id, state); remaining -= 1 end)
-	end
-	local deadline = os.clock() + 25
-	while remaining > 0 and os.clock() < deadline do task.wait(0.1) end
-end)
-]=]},
-{class = [=[
 LocalScript]=], name = [=[
 GBAClient]=], parent = 0, source = [=[
 --!strict
@@ -734,8 +554,7 @@ GBAClient]=], parent = 0, source = [=[
    1. background diagnostics catcher
    2. emulator + audio bridge + renderer + input + UI
    3. embedded-ROM auto-load (web/rom-tool.html produces the module)
-   4. cross-session persistence via DiagBridge
-   5. frame loop with profiling, adaptive pacing and a VU meter
+   4. frame loop with profiling, adaptive pacing and a VU meter
  ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -743,7 +562,6 @@ local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Logger)
-local DiagBridge = require(ReplicatedStorage.Shared.DiagBridge)
 
 local Diagnostics = require(script.Diagnostics)
 local GBA = require(script.Emulator.GBA)
@@ -774,7 +592,6 @@ local running = false
 local paused = false
 local frameIndex = 0
 local savedState = nil
-local lastSync = os.clock()
 local emulationDebt = 0
 
 local ui, renderer, input, dashboard
@@ -875,16 +692,7 @@ task.spawn(function()
 	end
 end)
 
--- 4. Cross-session persistence -----------------------------------------------
-task.spawn(function()
-	local persisted = DiagBridge.fetch()
-	if #persisted > 0 then
-		Diagnostics.mergeFindings(persisted)
-		Logger.info(`restored {#persisted} findings from the server store`)
-	end
-end)
-
--- 5. Invariants the catcher checks in the background --------------------------
+-- 4. Invariants the catcher checks in the background --------------------------
 Diagnostics.registerInvariant("cpu.pc.inrange", function()
 	local pc = gba.cpu.regs[16]
 	return pc >= 0 and pc < 0x10000000, `PC out of range: 0x{string.format("%08X", pc)}`
@@ -904,7 +712,7 @@ Diagnostics.registerInvariant("save.size.valid", function()
 	return backend.size > 0 and #backend.data == backend.size, "save backend size mismatch"
 end)
 
--- 6. Frame loop ---------------------------------------------------------------
+-- 5. Frame loop ---------------------------------------------------------------
 local function onFrame(dt: number)
 	local frameStart = os.clock()
 	frameIndex += 1
@@ -949,15 +757,6 @@ local function onFrame(dt: number)
 		ui:setScale(adaptive.currentScale)
 	end
 
-	-- periodic server sync of locally caught findings
-	local now = os.clock()
-	if now - lastSync > Config.DIAG.syncInterval then
-		lastSync = now
-		task.spawn(function()
-			DiagBridge.push(Diagnostics._store:toArray())
-		end)
-	end
-
 	if frameIndex % 30 == 0 and running and not paused then
 		local p = profiler:report()
 		local a = audio:stats()
@@ -979,7 +778,7 @@ Logger.info(`LuauGBA {Config.VERSION} online - diagnostics catcher running in th
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Audio]=], parent = 13, source = [=[
+Audio]=], parent = 9, source = [=[
 --!strict
 -- Sample monitor for the testing build. Computes levels for the UI; this
 -- adapter does not provide audible playback.
@@ -1042,7 +841,7 @@ return AudioBridge
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Diagnostics]=], parent = 13, source = [=[
+Diagnostics]=], parent = 9, source = [=[
 --!strict
 --[[ Diagnostics (init)
 
@@ -1055,12 +854,11 @@ Diagnostics]=], parent = 13, source = [=[
    Diag.summary()                     -- { error = n, bug = n, ... }
    Diag.findings({ category = "unfinished" })
    Diag.advice(finding)               -- suggested fix text
-   Diag.saveToBackend() / Diag.loadFromBackend()
 
  Background behaviour: install() starts a task loop that (a) static-scans the
- emulator's own scripts, (b) runs every registered invariant, (c) flushes new
- findings to the persistence backend. It also records the last scan time so the
- dashboard can prove it ran without the user triggering anything.
+ emulator's own scripts and (b) runs every registered invariant. Findings stay
+ in memory on this client for the current session. It also records the last
+ scan time so the dashboard can show when it ran.
  ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -1073,7 +871,6 @@ local Store = require(script.Store)
 local StaticScan = require(script.StaticScan)
 local Watchdog = require(script.Watchdog)
 local Hooks = require(script.Hooks)
-local Persistence = require(script.Persistence)
 
 export type Finding = Classifier.Finding
 
@@ -1088,9 +885,7 @@ Diag._invariants = {} :: { Invariant }
 Diag._installed = false
 Diag._lastScan = 0
 Diag._scanRuns = 0
-Diag._backend = nil :: any
 Diag._backgroundTask = nil :: thread?
-Diag._dirty = false
 
 -- Core capture --------------------------------------------------------------
 
@@ -1108,7 +903,6 @@ function Diag.capture(signal: {
 	end
 	local finding = Classifier.makeFinding(signal)
 	local stored = Diag._store:add(finding)
-	Diag._dirty = true
 	Diag.onFinding:fire(stored)
 	-- The originating error is already logged. Logging findings back into the
 	-- observed Logger/LogService creates recursive findings.
@@ -1147,35 +941,6 @@ function Diag.findings(filter: { category: string?, minSeverity: string? }?)
 		out[#out + 1] = f
 	end
 	return out
-end
-
---- Merge findings that were persisted by the server in an earlier session.
--- Counts are reconciled by taking the higher value so a rejoin does not inflate
--- occurrence totals.
-function Diag.mergeFindings(list: { any })
-	if type(list) ~= "table" then return end
-	for _, raw in list do
-		if type(raw) == "table" and type(raw.message) == "string" and type(raw.symbol) == "string" then
-			local existing = Diag._store:get(raw.symbol)
-			if existing then
-				existing.count = math.max(existing.count, raw.count or 1)
-				existing.lastSeen = math.max(existing.lastSeen, raw.lastSeen or 0)
-			else
-				Diag._store:add({
-					id = raw.symbol,
-					category = raw.category or "bug",
-					severity = raw.severity or "info",
-					message = raw.message,
-					source = raw.source or "server",
-					symbol = raw.symbol,
-					stack = raw.stack,
-					count = raw.count or 1,
-					firstSeen = raw.firstSeen or 0,
-					lastSeen = raw.lastSeen or 0,
-				})
-			end
-		end
-	end
 end
 
 function Diag.summary()
@@ -1229,14 +994,6 @@ local function runScan()
 	end
 end
 
-local function flush()
-	if not Diag._dirty or not Config.DIAG.persist or not Diag._backend then return end
-	local ok = pcall(function()
-		Diag._backend:save(Diag._store:toArray())
-	end)
-	if ok then Diag._dirty = false end
-end
-
 --- Start the background monitor. Returns immediately.
 function Diag.install()
 	if Diag._installed then return end
@@ -1250,22 +1007,14 @@ function Diag.install()
 
 	Hooks.install(function(sig) Diag.capture(sig) end)
 
-	Diag._backend = Persistence.auto(Config.DIAG.dataStoreName, "session")
-	local loaded = Diag._backend:load()
-	if loaded and #loaded > 0 then
-		Diag._store:fromArray(loaded)
-		Logger.info(`DIAG restored {#loaded} persisted findings from a previous session`)
-	end
-
 	Diag._backgroundTask = task.spawn(function()
 		local interval = Config.DIAG.scanInterval
 		while Diag._installed do
 			task.wait(interval)
 			pcall(runScan)
-			pcall(flush)
 		end
 	end)
-	Logger.info("DIAG background catcher online (static scan + invariants + persistence)")
+	Logger.info("DIAG background catcher online (static scan + invariants)")
 end
 
 function Diag.setWatchdogReporter(wd: any)
@@ -1274,11 +1023,6 @@ function Diag.setWatchdogReporter(wd: any)
 	end
 end
 
-function Diag.saveToBackend() flush() end
-function Diag.loadFromBackend(): { any }
-	if Diag._backend then return Diag._backend:load() end
-	return {}
-end
 function Diag.shutdown()
 	Diag._installed = false
 	Diag.onFinding:clear()
@@ -1294,7 +1038,7 @@ return Diag
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Classifier]=], parent = 15, source = [=[
+Classifier]=], parent = 11, source = [=[
 --!strict
 --[[ Diagnostics/Classifier.luau
 
@@ -1377,7 +1121,7 @@ end
 
 --- Derive severity from category + explicit hints.
 local function severityFor(category: Category, hint: string?): Severity
-	if hint == "fatal" or hint == "error" then return hint :: Severity end
+	if hint == "fatal" or hint == "error" or hint == "warn" or hint == "info" then return hint :: Severity end
 	if category == "error" then return "error" end
 	if category == "vulnerability" then return "warn" end
 	if category == "bug" then return "warn" end
@@ -1468,14 +1212,14 @@ return Classifier
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Hooks]=], parent = 15, source = [=[
+Hooks]=], parent = 11, source = [=[
 --!strict
 --[[ Diagnostics/Hooks.luau
 
  Installs the runtime surfaces that feed the catcher *without the user running
  anything*:
 
-   * ScriptContext.Error        -- server-side uncaught Lua errors
+   * ScriptContext.Error        -- uncaught Lua errors visible to this client
    * LogService.MessageOut      -- warn()/print()/error() from any script
    * RunService.Heartbeat/Stepped -- for stall detection
    * a global pcatch wrapper    -- for our own guarded entry points
@@ -1508,7 +1252,7 @@ function Hooks.install(sink: HookSink)
 	if Hooks._installed then return end
 	Hooks._installed = true
 
-	-- 1) Uncaught server errors
+	-- 1) Uncaught client errors
 	local sc = safeService("ScriptContext")
 	if sc then
 		local ok, conn = pcall(function()
@@ -1581,96 +1325,7 @@ return Hooks
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Persistence]=], parent = 15, source = [=[
---!strict
---[[ Diagnostics/Persistence.luau
-
- Findings must survive a rejoin so the user can ask "what did it catch?"
- without re-running anything. Two backends:
-
-   * ServerStore  -- DataStoreService (authoritative, cross-session)
-   * SessionStore -- in-memory only (client fallback / tests)
-
- The client never talks to DataStore directly (that would be a vulnerability);
- it reaches the server through the DiagnosticsBridge RemoteFunction. ]]
-
-local Persistence = {}
-
-local ServerStore = {}
-ServerStore.__index = ServerStore
-
-function ServerStore.new(dataStoreName: string, key: string)
-	return setmetatable({ _name = dataStoreName, _key = key, _ds = nil }, ServerStore) :: any
-end
-
-function ServerStore:_store()
-	if self._ds then return self._ds end
-	local ok, DSS = pcall(function() return game:GetService("DataStoreService") end)
-	if not ok then return nil end
-	local okGet, store = pcall(function() return DSS:GetDataStore(self._name) end)
-	if not okGet then return nil end
-	self._ds = store
-	return store
-end
-
-function ServerStore:save(arr: { any }): boolean
-	local store = self:_store()
-	if not store then return false end
-	local ok = pcall(function()
-		store:SetAsync(self._key, arr)
-	end)
-	return ok
-end
-
-function ServerStore:load(): { any }
-	local store = self:_store()
-	if not store then return {} end
-	local ok, data = pcall(function()
-		return store:GetAsync(self._key)
-	end)
-	if ok and type(data) == "table" then return data end
-	return {}
-end
-
--- Session-only backend -----------------------------------------------------
-
-local SessionStore = {}
-SessionStore.__index = SessionStore
-
-function SessionStore.new()
-	return setmetatable({ _data = {} :: { any } }, SessionStore) :: any
-end
-
-function SessionStore:save(arr: { any }): boolean
-	self._data = arr
-	return true
-end
-
-function SessionStore:load(): { any }
-	return self._data
-end
-
---- Choose the best available backend for the current context.
-function Persistence.auto(dataStoreName: string, key: string)
-	local isServer = false
-	local ok, rs = pcall(function() return game:GetService("RunService") end)
-	if ok and rs then
-		local okS, v = pcall(function() return rs:IsServer() end)
-		isServer = okS and v or false
-	end
-	if isServer then
-		return ServerStore.new(dataStoreName, key)
-	end
-	return SessionStore.new()
-end
-
-Persistence.ServerStore = ServerStore
-Persistence.SessionStore = SessionStore
-return Persistence
-]=]},
-{class = [=[
-ModuleScript]=], name = [=[
-StaticScan]=], parent = 15, source = [=[
+StaticScan]=], parent = 11, source = [=[
 --!strict
 --[[ Diagnostics/StaticScan.luau
 
@@ -1788,13 +1443,13 @@ return StaticScan
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Store]=], parent = 15, source = [=[
+Store]=], parent = 11, source = [=[
 --!strict
 --[[ Diagnostics/Store.luau
 
  Ring buffer of Findings with dedup-by-symbol and occurrence counting.
  Pure data structure (no Roblox APIs) so it is trivially unit-testable and
- reusable on both client and server.
+ used by the local diagnostics dashboard.
  ]]
 
 local Classifier = require(script.Parent.Classifier)
@@ -1811,6 +1466,8 @@ export type Store = {
 	toArray: (self: Store) -> { any },
 	fromArray: (self: Store, arr: { any }) -> (),
 }
+
+local severityRank = { info = 1, warn = 2, error = 3, fatal = 4 }
 
 local Store = {}
 Store.__index = Store
@@ -1829,7 +1486,7 @@ function Store:add(finding: Finding): Finding
 	if existing then
 		existing.count += 1
 		existing.lastSeen = finding.lastSeen
-		if finding.severity == "fatal" or finding.severity == "error" then
+		if severityRank[finding.severity] > severityRank[existing.severity] then
 			existing.severity = finding.severity
 		end
 		if finding.stack then existing.stack = finding.stack end
@@ -1875,7 +1532,7 @@ function Store:clear()
 	table.clear(self._order)
 end
 
---- Serialize to a plain array (DataStore-safe: no mixed tables / functions).
+--- Copy findings to a plain array.
 function Store:toArray(): { any }
 	local out = {}
 	for _, sym in self._order do
@@ -1916,7 +1573,7 @@ return Store
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Watchdog]=], parent = 15, source = [=[
+Watchdog]=], parent = 11, source = [=[
 --!strict
 --[[ Diagnostics/Watchdog.luau
 
@@ -1996,13 +1653,13 @@ return Watchdog
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-Emulator]=], parent = 13},
+Emulator]=], parent = 9},
 {class = [=[
 Folder]=], name = [=[
-Bus]=], parent = 22},
+Bus]=], parent = 17},
 {class = [=[
 ModuleScript]=], name = [=[
-MemoryBus]=], parent = 23, source = [=[
+MemoryBus]=], parent = 18, source = [=[
 --!strict
 --[[ Emulator/Bus/MemoryBus.luau
 
@@ -2296,7 +1953,7 @@ return MemoryBus
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Regions]=], parent = 23, source = [=[
+Regions]=], parent = 18, source = [=[
 --!strict
 --[[ Emulator/Bus/Regions.luau
 
@@ -2378,10 +2035,10 @@ return Regions
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-CPU]=], parent = 22},
+CPU]=], parent = 17},
 {class = [=[
 ModuleScript]=], name = [=[
-Arm7tdmi]=], parent = 26, source = [=[
+Arm7tdmi]=], parent = 21, source = [=[
 --!strict
 --[[ Emulator/CPU/Arm7tdmi.luau
 
@@ -3452,10 +3109,10 @@ return CPU
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-Cart]=], parent = 22},
+Cart]=], parent = 17},
 {class = [=[
 ModuleScript]=], name = [=[
-Cartridge]=], parent = 28, source = [=[
+Cartridge]=], parent = 23, source = [=[
 --!strict
 --[[ Emulator/Cart/Cartridge.luau
 
@@ -3633,7 +3290,7 @@ return Cartridge
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-HLEBIOS]=], parent = 28, source = [=[
+HLEBIOS]=], parent = 23, source = [=[
 --!strict
 --[[ Emulator/Cart/HLEBIOS.luau
 
@@ -3857,7 +3514,7 @@ return HLEBIOS
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-DemoROM]=], parent = 22, source = [=[
+DemoROM]=], parent = 17, source = [=[
 --!strict
 -- Original interactive homebrew. Hold GBA buttons to change the screen colour.
 -- Generated in memory: no external ROM, BIOS, assets or network access required.
@@ -3898,7 +3555,7 @@ return DemoROM
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-GBA]=], parent = 22, source = [=[
+GBA]=], parent = 17, source = [=[
 --!strict
 --[[ Emulator/GBA.luau
 
@@ -4126,10 +3783,10 @@ return GBA
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-Hardware]=], parent = 22},
+Hardware]=], parent = 17},
 {class = [=[
 ModuleScript]=], name = [=[
-Apu]=], parent = 33, source = [=[
+Apu]=], parent = 28, source = [=[
 --!strict
 --[[ Emulator/Hardware/Apu.luau
 
@@ -4475,7 +4132,7 @@ return Apu
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Dma]=], parent = 33, source = [=[
+Dma]=], parent = 28, source = [=[
 --!strict
 -- Four DMA channels. Programmer-visible addresses are latched on enable;
 -- repeating transfers advance the internal source and optionally reload dest.
@@ -4597,7 +4254,7 @@ return Dma
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Interrupts]=], parent = 33, source = [=[
+Interrupts]=], parent = 28, source = [=[
 --!strict
 --[[ Emulator/Hardware/Interrupts.luau
 
@@ -4671,7 +4328,7 @@ return Interrupts
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Keypad]=], parent = 33, source = [=[
+Keypad]=], parent = 28, source = [=[
 --!strict
 --[[ Emulator/Hardware/Keypad.luau
 
@@ -4760,7 +4417,7 @@ return Keypad
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Ppu]=], parent = 33, source = [=[
+Ppu]=], parent = 28, source = [=[
 --!strict
 --[[ Emulator/Hardware/Ppu.luau
 
@@ -5488,7 +5145,7 @@ return Ppu
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Timers]=], parent = 33, source = [=[
+Timers]=], parent = 28, source = [=[
 --!strict
 --[[ Emulator/Hardware/Timers.luau
 
@@ -5602,7 +5259,7 @@ return Timers
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-ROMLoader]=], parent = 22, source = [=[
+ROMLoader]=], parent = 17, source = [=[
 --!strict
 --[[ Emulator/ROMLoader.luau
 
@@ -5696,10 +5353,10 @@ return ROMLoader
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-Save]=], parent = 22},
+Save]=], parent = 17},
 {class = [=[
 ModuleScript]=], name = [=[
-SaveBackend]=], parent = 41, source = [=[
+SaveBackend]=], parent = 36, source = [=[
 --!strict
 --[[ Emulator/Save/SaveBackend.luau
 
@@ -5936,7 +5593,7 @@ return SaveBackend
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-SaveState]=], parent = 41, source = [=[
+SaveState]=], parent = 36, source = [=[
 --!strict
 -- Session snapshots include every mutable hardware field. Object references
 -- and callbacks stay attached to the live machine; ROM data is never copied.
@@ -5999,7 +5656,7 @@ return SaveState
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Input]=], parent = 13, source = [=[
+Input]=], parent = 9, source = [=[
 --!strict
 --[[ Input (init)
 
@@ -6138,10 +5795,10 @@ return InputManager
 ]=]},
 {class = [=[
 Folder]=], name = [=[
-Optimize]=], parent = 13},
+Optimize]=], parent = 9},
 {class = [=[
 ModuleScript]=], name = [=[
-Adaptive]=], parent = 45, source = [=[
+Adaptive]=], parent = 40, source = [=[
 --!strict
 --[[ Optimize/Adaptive.luau
 
@@ -6213,7 +5870,7 @@ return Adaptive
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Profiler]=], parent = 45, source = [=[
+Profiler]=], parent = 40, source = [=[
 --!strict
 --[[ Optimize/Profiler.luau
 
@@ -6269,7 +5926,7 @@ return Profiler
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-Render]=], parent = 13, source = [=[
+Render]=], parent = 9, source = [=[
 --!strict
 --[[ Render (init)
 
@@ -6391,7 +6048,7 @@ return Renderer
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-UI]=], parent = 13, source = [=[
+UI]=], parent = 9, source = [=[
 --!strict
 --[[ UI (init)
 
@@ -6617,7 +6274,7 @@ return UI
 ]=]},
 {class = [=[
 ModuleScript]=], name = [=[
-DiagDashboard]=], parent = 49, source = [=[
+DiagDashboard]=], parent = 44, source = [=[
 --!strict
 --[[ UI/DiagDashboard.luau
 
@@ -6825,9 +6482,7 @@ local destinations = {
 ReplicatedStorage]=])},
 {index = 2, parent = game:GetService([=[
 ReplicatedStorage]=])},
-{index = 11, parent = game:GetService([=[
-ServerScriptService]=])},
-{index = 13, parent = starterScripts}
+{index = 9, parent = starterScripts}
 }
 -- Preflight every destination before creating or parenting anything.
 for _, destination in ipairs(destinations) do
