@@ -152,7 +152,8 @@ function MemoryBus:write8(addr: number, value: number)
 		-- 8-bit writes to VRAM are ignored on real hardware
 		return
 	elseif top == 0x07 then
-		self.oam[band(addr, Regions.OAM_MASK) + 1] = value
+		-- OAM does not support 8-bit writes on real hardware.
+		return
 	elseif top <= 0x0D then
 		return -- ROM read-only
 	else
@@ -165,6 +166,25 @@ end
 function MemoryBus:write16(addr: number, value: number)
 	local top = addr // 0x1000000
 	if top == 0x04 then return self:writeIO16(band(addr, 0x3FE), value) end
+	if top >= 0x0E then
+		-- SRAM/Flash are 8-bit parts. A wider store latches a single byte,
+		-- selected by the address low bits - the conformance suite pins this
+		-- down exactly (strh at an even address leaves the next byte intact).
+		local backend = self.cart and self.cart.backend
+		if backend then
+			local byte = (addr % 2 == 0) and band(value, 0xFF) or band(value // 0x100, 0xFF)
+			backend:write8(addr, byte)
+		end
+		return
+	end
+	if top == 0x07 then
+		-- OAM rejects 8-bit writes but accepts 16-bit ones, so route the
+		-- halfword straight into the array rather than via write8.
+		local off = band(addr, Regions.OAM_MASK)
+		self.oam[off + 1] = band(value, 0xFF)
+		self.oam[off + 2] = band(value // 0x100, 0xFF)
+		return
+	end
 	if top == 0x06 then
 		-- VRAM: only aligned 16-bit writes land
 		local off = Regions.vramOffset(addr)
@@ -181,6 +201,14 @@ function MemoryBus:write32(addr: number, value: number)
 	if top >= 0x08 and top <= 0x0D then return end -- ROM is read-only
 	if top == 0x04 then
 		self:writeIO16(band(addr, 0x3FE), band(value, 0xFFFF))
+		return
+	end
+	if top >= 0x0E then
+		local backend = self.cart and self.cart.backend
+		if backend then
+			local lane = addr % 4
+			backend:write8(addr, band(value // (2 ^ (8 * lane)), 0xFF))
+		end
 		return
 	end
 	if top == 0x06 then

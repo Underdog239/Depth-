@@ -243,7 +243,15 @@ local function shiftOperand(cpu, value, type, amount, byRegister, regValue)
 			result = arshift(value, amount) % 0x100000000
 		end
 	else -- ROR
-		if amount == 0 then return value, carry end
+		if amount == 0 then
+			if not byRegister then
+				-- ROR #0 in the immediate encoding means RRX: rotate right one
+				-- bit through the carry flag.
+				result = bor(cpu.c and 0x80000000 or 0, rshift(value, 1))
+				return result, band(value, 1) ~= 0
+			end
+			return value, carry
+		end
 		amount = amount % 32
 		if amount == 0 then
 			carry = band(value, 0x80000000) ~= 0
@@ -274,11 +282,11 @@ function CPU:writeWord(addr: number, value: number)
 end
 
 function CPU:readHalf(addr: number): number
-	return self.bus:read16(band(addr, 0xFFFFFFE))
+	return self.bus:read16(band(addr, 0xFFFFFFF))
 end
 
 function CPU:writeHalf(addr: number, value: number)
-	self.bus:write16(band(addr, 0xFFFFFFE), value)
+	self.bus:write16(band(addr, 0xFFFFFFF), value)
 end
 
 function CPU:readByte(addr: number): number
