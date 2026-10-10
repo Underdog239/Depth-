@@ -119,7 +119,7 @@ for _,object in objects do
  if object.ClassName=='TextButton' and object.Text and object.Text:find('Run demo',1,true) then demo=object end
 end
 assert(demo,'Missing demo action');demo.Activated:Fire()
-for _=1,24 do services.RunService.RenderStepped:Fire(1/60) end
+for _=1,30 do services.RunService.RenderStepped:Fire(1/60) end
 for _,thread in tasks do
  if coroutine.status(thread)=='suspended' then local ok,err=coroutine.resume(thread);assert(ok,err) end
 end
@@ -129,6 +129,11 @@ for _,object in objects do
   assert(not object.Text:find('Emulation stopped:',1,true),object.Text)
  end
 end
+local metrics=false
+for _,object in objects do
+ if object.ClassName=='TextLabel' and object.Text and object.Text:find('GBA frames',1,true) and object.Text:find('PC ',1,true) then metrics=true end
+end
+assert(metrics,'Boot progress metrics must expose actual emulated frames and PC')
 local count=#objects
 launch()
 assert(#objects==count,'Repeated launch created duplicate UI/audio')
@@ -231,6 +236,8 @@ local Demo=bundle.load(root..'Emulator/DemoROM')
 local gba=GBA.new({rom=Demo.create()})
 gba:runFrame()
 assert(gba.ppu.frameComplete and gba.frames==1)
+gba:runFrame();gba:runFrame()
+assert(buffer.readu32(gba:framebuffer(),(80*240+120)*4)==0xFF5ACD18,"Built-in demo must produce its opaque green framebuffer")
 assert(not pcall(bundle.load,'missing'),'Missing module accepted')
 print('PASS: bundled emulator completes demo frame; cache identity and missing-module errors verified')
 ''')

@@ -67,6 +67,7 @@ local function loadRomBytes(bytes: buffer)
 	savedState = nil
 	ui:setRunning(true)
 	ui:setStatus(describeRom(info, gba.cart.size))
+	if renderer then renderer:present(gba:framebuffer(), true) end
 	if not info.headerChecksumOk then
 		Diagnostics.report(`ROM header checksum mismatch for '{info.title}'`, { source = "GBA.loadROM", kind = "bug", severity = "warn" })
 	end
@@ -104,6 +105,7 @@ local hooks = {
 		gba:reset()
 		running, paused = true, false
 		ui:setRunning(true)
+		renderer:present(gba:framebuffer(), true)
 		ui:setStatus("Reset complete")
 	end,
 	onScale = function(scale: number)
@@ -138,6 +140,7 @@ local hooks = {
 		savedState = nil
 		running, paused = true, false
 		ui:setRunning(true)
+		renderer:present(gba:framebuffer(), true)
 		ui:setStatus("Battery save imported; game restarted")
 	end,
 	onToggleDiag = function()
@@ -238,8 +241,10 @@ local function onFrame(dt: number)
 	if frameIndex % 30 == 0 then
 		local p = profiler:report()
 		-- UI refresh is throttled independently of emulation.
-		ui:setMetrics(string.format("%s | work %.1fms | budget %.0fms | %.0f FPS",
-			renderer.backend, p.emulate or 0, adaptive.sliceMs, 1000 / adaptive.averageMs))
+		local state = not running and "stopped" or (paused and "paused" or (menuOpen and "menu paused" or (not focused and "unfocused" or "running")))
+		ui:setMetrics(string.format("%s · %s · GBA frames %d\nPC %08X · LCD %04X · work %.1fms · budget %.0fms",
+			renderer.backend, state, gba.frames, gba.cpu.regs[16], gba.ppu.dispcnt,
+			p.emulate or 0, adaptive.sliceMs))
 	end
 end
 

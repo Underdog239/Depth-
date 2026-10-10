@@ -77,3 +77,12 @@ Before switching games, use **Saves → Export save** and copy the text to a fil
 Load the same game before importing it. State snapshots last only for the current
 session. For Studio installations, back up/remove the old `Assets.ROM` before
 installing a new game. Never commit ROMs or generated game launchers to GitHub.
+
+## Game detected, but screen is blank
+
+ROM detection verifies file transfer/header parsing. To check display startup,
+open Library and Run demo, then close the menu and let it produce a frame; the
+demo should turn green. Watch **GBA frames** in the bottom line. Opening the menu
+pauses emulation. If the demo works but your game stays blank, send the ROM title
+and a screenshot showing PC/LCD/frame values and Saves → Health report. Some
+games still depend on unimplemented BIOS/hardware behavior.

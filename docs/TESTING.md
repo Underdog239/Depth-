@@ -78,6 +78,7 @@ luau build/Tests/run.luau
 luau build/Tests/regressions.luau
 luau build/Tests/client_features.luau
 python3 tools/check_client_adapters.py
+python3 tools/check_renderer.py
 node tools/check_rom_tool.cjs
 python3 tools/scan_health.py --output health --module src/Shared/BuildReport.luau
 python3 tools/fetch_gba_tests.py
@@ -133,3 +134,15 @@ ROM data in a bug report.
   session should produce a fresh-session instruction instead of replacing it.
 - Automated coverage checks generated ROM bytes, launcher handoff, auto-load,
   rejected malformed payloads, tab navigation and normal runtime startup.
+
+## Detected ROM but blank display
+
+First run the built-in demo: it should become green after the emulator produces
+a frame. Boot can take time with the bounded CPU budget. The bottom metrics show
+GBA frame count, execution state, PC, LCD register and renderer. Opening Library
+pauses emulation. If frames increase and the demo is green while another game
+stays white, report the game title/code plus a screenshot of these metrics and
+Saves → Health report. Import success alone does not establish compatibility.
+Native image upload failures switch to the grid renderer automatically; the
+same framebuffer is presented immediately. The grid starts black and resets
+when changing/restarting games. Real Roblox renderer acceptance is still manual.

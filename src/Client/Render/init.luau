@@ -65,6 +65,10 @@ function Renderer:_createBackend()
 	if label then label:Destroy() end
 	if editable then editable:Destroy() end
 
+	self:_createGrid(err)
+end
+
+function Renderer:_createGrid(reason: any)
 	-- Fallback: coarse frame grid
 	self.backend = "grid"
 	self.gridCols = 40
@@ -77,6 +81,7 @@ function Renderer:_createBackend()
 	for gy = 0, self.gridRows - 1 do
 		for gx = 0, self.gridCols - 1 do
 			local cell = Instance.new("Frame")
+			cell.BackgroundColor3 = Color3.new(0, 0, 0)
 			cell.BorderSizePixel = 0
 			cell.Size = UDim2.fromScale(1 / self.gridCols, 1 / self.gridRows)
 			cell.Position = UDim2.fromScale(gx / self.gridCols, gy / self.gridRows)
@@ -84,7 +89,7 @@ function Renderer:_createBackend()
 			self.cells[gy * self.gridCols + gx + 1] = cell
 		end
 	end
-	Logger.warn("Renderer backend: grid fallback (EditableImage unavailable)")
+	Logger.warn("Renderer backend: grid fallback: " .. tostring(reason))
 end
 
 --- Push the emulator framebuffer to the screen.
@@ -92,23 +97,29 @@ end
 -- so this is a single engine upload with no per-pixel Lua work.
 function Renderer:present(fb: buffer, force: boolean?)
 	if self.backend == "editableimage" then
-		self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
-	else
-		if not force and os.clock() - self.lastPresent < 1 / 20 then return end
-		self.lastPresent = os.clock()
-		local cols, rows = self.gridCols, self.gridRows
-		for gy = 0, rows - 1 do
-			for gx = 0, cols - 1 do
-				local px = math.floor((gx + 0.5) * W / cols)
-				local py = math.floor((gy + 0.5) * H / rows)
-				local o = (py * W + px) * 4
-				local cell = self.cells[gy * cols + gx + 1]
-				local color = buffer.readu32(fb, o)
-				local index = gy * cols + gx + 1
-				if self.cellColors[index] ~= color then
-					self.cellColors[index] = color
-					cell.BackgroundColor3 = Color3.fromRGB(buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2))
-				end
+		local ok, failure = pcall(function()
+			self.editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), fb)
+		end)
+		if ok then return end
+		self.imageLabel:Destroy(); self.editableImage:Destroy()
+		self.imageLabel, self.editableImage = nil, nil
+		self:_createGrid(failure)
+		force = true
+	end
+	if not force and os.clock() - self.lastPresent < 1 / 20 then return end
+	self.lastPresent = os.clock()
+	local cols, rows = self.gridCols, self.gridRows
+	for gy = 0, rows - 1 do
+		for gx = 0, cols - 1 do
+			local px = math.floor((gx + 0.5) * W / cols)
+			local py = math.floor((gy + 0.5) * H / rows)
+			local o = (py * W + px) * 4
+			local cell = self.cells[gy * cols + gx + 1]
+			local color = buffer.readu32(fb, o)
+			local index = gy * cols + gx + 1
+			if self.cellColors[index] ~= color then
+				self.cellColors[index] = color
+				cell.BackgroundColor3 = Color3.fromRGB(buffer.readu8(fb, o), buffer.readu8(fb, o + 1), buffer.readu8(fb, o + 2))
 			end
 		end
 	end

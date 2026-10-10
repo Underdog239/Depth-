@@ -71,9 +71,9 @@ function UI.new(hooks, parent)
 	screen.BorderSizePixel = 0; screen.AnchorPoint = Vector2.new(0.5, 0)
 	screen.Parent = root; self.screenHost = screen
 	Theme.outline(screen, accent, 2)
-	local metrics = label("", root, 28)
+	local metrics = label("", root, 36)
 	metrics.TextSize = 11; metrics.TextXAlignment = Enum.TextXAlignment.Center
-	metrics.Position = UDim2.new(0, 8, 1, -28); metrics.Size = UDim2.new(1, -16, 0, 28)
+	metrics.Position = UDim2.new(0, 8, 1, -36); metrics.Size = UDim2.new(1, -16, 0, 36)
 	metrics.TextColor3 = Theme.muted
 	self.metrics = metrics
 
