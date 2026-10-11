@@ -1,4 +1,4 @@
-# Depth / LuauGBA — testing build
+# Depth / LuauGBA — testing build nameer
 
 A client-side Game Boy Advance emulator written in Luau for Roblox.
 All runtime work stays on the client; no server scripts, remotes or DataStores
