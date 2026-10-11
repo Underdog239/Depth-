@@ -1,0 +1,8 @@
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+build/
+.DS_Store
+Tests/combined.luau
+__pycache__/

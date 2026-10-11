@@ -1,0 +1,14 @@
+{
+  "name": "AvalonR1",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Avalon": { "$path": "src/Avalon" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "AvalonDemo": { "$path": "src/Demo" }
+      }
+    }
+  }
+}
